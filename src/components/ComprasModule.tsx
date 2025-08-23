@@ -1,249 +1,321 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { RegFacturaDetalle } from '../types/database';
+import { getCompras, getProveedores, testComprasConnection, calculateComprasTotal, getDocumentStats } from '../lib/database';
+import { RegCompra } from '../types/database';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { 
+import {
   Search,
   Filter,
   FileText,
   Calendar,
   TrendingDown,
   Building,
-  DollarSign
+  DollarSign,
+  Minus,
+  Plus
 } from 'lucide-react';
+import { NoConnection } from './NoConnection';
+import { SetupGuide } from './SetupGuide';
+import { MonthSelector, getMonthDateRange } from './MonthSelector';
+import { getDocumentTypeName, getDocumentTypeColor, getDocumentMultiplier } from '../lib/documentTypes';
+import { CompactFilterBar } from './CompactFilterBar';
+import { SortableHeader, SortDirection } from './SortableHeader';
 
 export const ComprasModule: React.FC = () => {
-  const [compras, setCompras] = useState<RegFacturaDetalle[]>([]);
+  const [compras, setCompras] = useState<RegCompra[]>([]);
   const [loading, setLoading] = useState(true);
+  const [connected, setConnected] = useState<boolean | null>(null);
+  const [showSetup, setShowSetup] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [selectedRutEmisor, setSelectedRutEmisor] = useState('');
-  const [emisores, setEmisores] = useState<Array<{rut: string, razon_social: string}>>([]);
+  const [selectedRutProveedor, setSelectedRutProveedor] = useState('');
+  const [filtersInitialized, setFiltersInitialized] = useState(false);
+  const [proveedores, setProveedores] = useState<Array<{rut: string, razon_social: string}>>([]);
+  const currentDate = new Date();
+  const [selectedMonth, setSelectedMonth] = useState<number>(currentDate.getMonth()); // Current month by default
+  const [selectedYear, setSelectedYear] = useState<number>(currentDate.getFullYear());
+  const [isLoadingData, setIsLoadingData] = useState(false); // Prevent multiple API calls
+  const [sortConfig, setSortConfig] = useState<{
+    field: string;
+    direction: SortDirection;
+  } | null>(null);
 
   const fetchCompras = async () => {
-    console.log('🔍 Iniciando fetchCompras...');
-    console.log('Supabase disponible:', !!supabase);
-    
-    if (!supabase) {
-      console.error('❌ Supabase no está configurado. Necesitas conectar a Supabase primero.');
-      setLoading(false);
+    if (isLoadingData) return; // Prevent multiple simultaneous calls
+
+    // Only fetch if filters are initialized
+    if (!filtersInitialized) {
+      console.log('⏳ Esperando inicialización de filtros...');
       return;
     }
-    
+
+    setIsLoadingData(true);
     setLoading(true);
-    console.log('📊 Consultando reg_facturas_detalle para compras...');
-    
-    let query = supabase
-      .from('reg_facturas_detalle')
-      .select('*')
-      .order('created_at', { ascending: false });
 
-    console.log('🔧 Aplicando filtros...');
-    if (dateFrom) {
-      console.log('Filtro fecha desde:', dateFrom);
-      query = query.gte('fecha_emision', dateFrom);
-    }
-    if (dateTo) {
-      console.log('Filtro fecha hasta:', dateTo);
-      query = query.lte('fecha_emision', dateTo);
-    }
-    if (selectedRutEmisor) {
-      console.log('Filtro RUT emisor:', selectedRutEmisor);
-      query = query.eq('rut_emisor', selectedRutEmisor);
-    }
+    const filterParams = {
+      searchTerm,
+      dateFrom,
+      dateTo,
+      rutProveedor: selectedRutProveedor
+    };
 
-    const { data, error } = await query;
-    
-    console.log('📋 Resultado de la consulta de compras:');
-    console.log('Error:', error);
-    console.log('Datos recibidos:', data?.length || 0, 'registros');
-    
-    if (error) {
+    console.log('📊 Obteniendo compras con filtros:', filterParams);
+
+    try {
+      const data = await getCompras(filterParams);
+      console.log('✅ Compras obtenidas:', data.length, 'registros');
+      setCompras(data);
+    } catch (error) {
       console.error('❌ Error al obtener compras:', error);
-      console.error('Detalles del error:', error.message);
-    } else {
-      let filteredData = data || [];
-      console.log('📊 Datos antes del filtro de búsqueda:', filteredData.length);
-      
-      if (searchTerm) {
-        console.log('🔍 Aplicando filtro de búsqueda:', searchTerm);
-        filteredData = filteredData.filter(item => 
-          item.descripcion_item?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          item.folio?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          item.razon_social_emisor?.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-      }
-      console.log('📊 Datos después del filtro:', filteredData.length);
-      setCompras(filteredData);
+      setCompras([]);
+    } finally {
+      setLoading(false);
+      setIsLoadingData(false);
     }
-    setLoading(false);
   };
 
-  const fetchEmisores = async () => {
-    console.log('🏢 Obteniendo lista de emisores...');
-    if (!supabase) return;
-    
-    const { data } = await supabase
-      .from('reg_facturas_detalle')
-      .select('rut_emisor, razon_social_emisor')
-      .not('rut_emisor', 'is', null)
-      .not('razon_social_emisor', 'is', null);
-    
-    console.log('🏢 Emisores encontrados:', data?.length || 0);
-    
-    if (data) {
-      const uniqueEmisores = data.reduce((acc: Array<{rut: string, razon_social: string}>, curr) => {
-        if (curr.rut_emisor && curr.razon_social_emisor && 
-            !acc.find(e => e.rut === curr.rut_emisor)) {
-          acc.push({
-            rut: curr.rut_emisor,
-            razon_social: curr.razon_social_emisor
-          });
-        }
-        return acc;
-      }, []);
-      console.log('🏢 Emisores únicos:', uniqueEmisores.length);
-      setEmisores(uniqueEmisores.sort((a, b) => a.razon_social.localeCompare(b.razon_social)));
+  const fetchProveedores = async () => {
+    try {
+      const data = await getProveedores();
+      setProveedores(data);
+    } catch (error) {
+      console.error('❌ Error al obtener proveedores:', error);
+      setProveedores([]);
     }
   };
 
   useEffect(() => {
-    fetchEmisores();
-    fetchCompras();
+    const initializeData = async () => {
+      setLoading(true);
+      console.log('🚀 Inicializando ComprasModule...');
+
+      // Probar conexión a tabla de compras
+      const isConnected = await testComprasConnection();
+      setConnected(isConnected);
+
+      if (isConnected) {
+        console.log('✅ Conectado, cargando proveedores...');
+        await fetchProveedores();
+
+        // Set initial month dates to current month
+        const { dateFrom: initialDateFrom, dateTo: initialDateTo } = getMonthDateRange(selectedMonth, selectedYear);
+        console.log('📅 Estableciendo fechas iniciales:', { initialDateFrom, initialDateTo });
+        setDateFrom(initialDateFrom);
+        setDateTo(initialDateTo);
+
+        // Mark filters as initialized
+        setFiltersInitialized(true);
+      } else {
+        setLoading(false);
+      }
+    };
+
+    initializeData();
   }, []);
 
+  const handleMonthChange = (month: number, year: number) => {
+    setSelectedMonth(month);
+    setSelectedYear(year);
+
+    const { dateFrom: newDateFrom, dateTo: newDateTo } = getMonthDateRange(month, year);
+    setDateFrom(newDateFrom);
+    setDateTo(newDateTo);
+  };
+
+
+  // Fetch data when connection is established and filters are initialized
   useEffect(() => {
-    fetchCompras();
-  }, [searchTerm, dateFrom, dateTo, selectedRutEmisor]);
-
-  const totalCompras = compras.reduce((sum, compra) => sum + (compra.monto_item || 0), 0);
-
-  // Agrupar compras por folio
-  const comprasAgrupadas = compras.reduce((grupos: { [key: string]: RegFacturaDetalle[] }, compra) => {
-    const folio = compra.folio || 'Sin folio';
-    if (!grupos[folio]) {
-      grupos[folio] = [];
+    if (connected === true && filtersInitialized) {
+      console.log('🔄 Ejecutando fetchCompras por conexión establecida');
+      fetchCompras();
     }
-    grupos[folio].push(compra);
-    return grupos;
-  }, {});
+  }, [connected, filtersInitialized]);
 
-  const foliosOrdenados = Object.keys(comprasAgrupadas).sort((a, b) => {
-    const fechaA = comprasAgrupadas[a][0]?.fecha_emision || '';
-    const fechaB = comprasAgrupadas[b][0]?.fecha_emision || '';
+  // Fetch data when filters change (only after initialization)
+  useEffect(() => {
+    if (connected === true && filtersInitialized) {
+      console.log('🔄 Ejecutando fetchCompras por cambio de filtros:', { searchTerm, dateFrom, dateTo, selectedRutProveedor });
+      fetchCompras();
+    }
+  }, [searchTerm, dateFrom, dateTo, selectedRutProveedor, connected, filtersInitialized]);
+
+  const totalCompras = calculateComprasTotal(compras);
+  const comprasStats = getDocumentStats(compras, 'tipo_doc');
+
+  // Las compras ya vienen como registros individuales de la tabla reg_compras
+  const comprasOrdenadas = compras.sort((a, b) => {
+    const fechaA = a.fecha_docto || '';
+    const fechaB = b.fecha_docto || '';
     return new Date(fechaB).getTime() - new Date(fechaA).getTime();
   });
 
+  // Sort compras data based on sortConfig
+  const sortedCompras = React.useMemo(() => {
+    if (!sortConfig) return comprasOrdenadas;
+
+    const sorted = [...comprasOrdenadas].sort((a, b) => {
+      let aValue: any, bValue: any;
+
+      switch (sortConfig.field) {
+        case 'folio':
+          aValue = a.folio || '';
+          bValue = b.folio || '';
+          break;
+        case 'fecha':
+          aValue = new Date(a.fecha_docto || '').getTime();
+          bValue = new Date(b.fecha_docto || '').getTime();
+          break;
+        case 'proveedor':
+          aValue = a.razon_social?.toLowerCase() || '';
+          bValue = b.razon_social?.toLowerCase() || '';
+          break;
+        case 'tipo':
+          aValue = a.tipo_doc || '';
+          bValue = b.tipo_doc || '';
+          break;
+        case 'montoNeto':
+          aValue = Math.abs(a.monto_neto || 0);
+          bValue = Math.abs(b.monto_neto || 0);
+          break;
+        case 'iva':
+          aValue = Math.abs(a.monto_iva_recuperable || 0);
+          bValue = Math.abs(b.monto_iva_recuperable || 0);
+          break;
+        case 'montoTotal':
+          aValue = Math.abs(a.monto_total || 0);
+          bValue = Math.abs(b.monto_total || 0);
+          break;
+        case 'estado':
+          aValue = a.fecha_recepcion ? 'Recibida' : 'Pendiente';
+          bValue = b.fecha_recepcion ? 'Recibida' : 'Pendiente';
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [comprasOrdenadas, sortConfig]);
+
+  const handleSort = (field: string) => {
+    let direction: SortDirection = 'asc';
+
+    if (sortConfig && sortConfig.field === field && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    } else if (sortConfig && sortConfig.field === field && sortConfig.direction === 'desc') {
+      direction = null;
+    }
+
+    setSortConfig(direction ? { field, direction } : null);
+  };
+
+  // Si no hay conexión, mostrar componente de configuración
+  if (connected === false) {
+    return (
+      <>
+        <NoConnection onShowSetup={() => setShowSetup(true)} />
+        {showSetup && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-slate-900">Configuración de Supabase</h2>
+                <button
+                  onClick={() => setShowSetup(false)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+              <SetupGuide />
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Filtros */}
-      <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-8">
-        <div className="flex items-center space-x-3 mb-6">
-          <div className="w-8 h-8 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
-            <Filter className="h-4 w-4 text-slate-600" />
-          </div>
-          <h3 className="text-xl font-semibold text-slate-900 tracking-tight">Filtros</h3>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-              Buscar
-            </label>
-            <div className="relative">
-              <Search className="h-5 w-5 absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Producto, folio, proveedor..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-300 transition-all duration-200 text-slate-900 placeholder-slate-400"
-              />
-            </div>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-              Fecha Desde
-            </label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-300 transition-all duration-200 text-slate-900"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-              Fecha Hasta
-            </label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-300 transition-all duration-200 text-slate-900"
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-              Proveedor
-            </label>
-            <select
-              value={selectedRutEmisor}
-              onChange={(e) => setSelectedRutEmisor(e.target.value)}
-              className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-300 transition-all duration-200 text-slate-900"
-            >
-              <option value="">Todos los proveedores</option>
-              {emisores.map(emisor => (
-                <option key={emisor.rut} value={emisor.rut}>
-                  {emisor.razon_social}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
+      {/* Barra de Filtros Compacta */}
+      <CompactFilterBar
+        searchTerm={searchTerm}
+        onSearchChange={setSearchTerm}
+        dateFrom={dateFrom}
+        onDateFromChange={setDateFrom}
+        dateTo={dateTo}
+        onDateToChange={setDateTo}
+        selectedClient={selectedRutProveedor}
+        onClientChange={setSelectedRutProveedor}
+        clients={proveedores}
+        placeholder="Producto, folio, proveedor..."
+        showClientFilter={true}
+      />
+
+      {/* Selector de Mes */}
+      <MonthSelector
+        selectedMonth={selectedMonth}
+        selectedYear={selectedYear}
+        onMonthChange={handleMonthChange}
+        className="mt-6"
+      />
 
       {/* Resumen */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="bg-gradient-to-br from-orange-500 via-amber-600 to-red-600 rounded-2xl p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+        <div className="bg-gradient-to-br from-orange-500 via-amber-600 to-red-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-orange-100 text-sm font-medium tracking-wide uppercase mb-2">Total Registros</p>
-              <p className="text-4xl font-bold tracking-tight">{compras.length}</p>
-            </div>
-            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-              <FileText className="h-8 w-8 text-white" />
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-gradient-to-br from-red-500 via-rose-600 to-pink-600 rounded-2xl p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-red-100 text-sm font-medium tracking-wide uppercase mb-2">Total Compras</p>
-              <p className="text-4xl font-bold tracking-tight">${totalCompras.toLocaleString()}</p>
-            </div>
-            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-              <DollarSign className="h-8 w-8 text-white" />
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-gradient-to-br from-indigo-500 via-blue-600 to-cyan-600 rounded-2xl p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-indigo-100 text-sm font-medium tracking-wide uppercase mb-2">Promedio por Línea</p>
-              <p className="text-4xl font-bold tracking-tight">
-                ${compras.length > 0 ? Math.round(totalCompras / compras.length).toLocaleString() : '0'}
+            <div className="flex-1 min-w-0">
+              <p className="text-orange-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Total Documentos</p>
+              <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">{compras.length}</p>
+              <p className="text-orange-200 text-xs mt-1 truncate">
+                {comprasStats.regularDocs} docs + {comprasStats.creditNotes} NC
               </p>
             </div>
-            <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-sm">
-              <TrendingDown className="h-8 w-8 text-white" />
+            <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+              <FileText className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-red-500 via-rose-600 to-pink-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+          <div className="flex items-center justify-between">
+            <div className="flex-1 min-w-0">
+              <p className="text-red-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Compras Brutas</p>
+              <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">${comprasStats.positive.toLocaleString()}</p>
+              <p className="text-red-200 text-xs mt-1 truncate">Sin notas de crédito</p>
+            </div>
+            <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+              <Plus className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-green-500 via-emerald-600 to-teal-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+          <div className="flex items-center justify-between">
+            <div className="flex-1 min-w-0">
+              <p className="text-green-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Notas de Crédito</p>
+              <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">${comprasStats.negative.toLocaleString()}</p>
+              <p className="text-green-200 text-xs mt-1 truncate">{comprasStats.creditNotes} documentos</p>
+            </div>
+            <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+              <Minus className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-indigo-500 via-blue-600 to-cyan-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+          <div className="flex items-center justify-between">
+            <div className="flex-1 min-w-0">
+              <p className="text-indigo-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Total Neto</p>
+              <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">${totalCompras.toLocaleString()}</p>
+              <p className="text-indigo-200 text-xs mt-1 truncate">Compras - Créditos</p>
+            </div>
+            <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+              <DollarSign className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
             </div>
           </div>
         </div>
@@ -255,133 +327,137 @@ export const ComprasModule: React.FC = () => {
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50/50">
               <tr>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                <SortableHeader
+                  field="folio"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
                   Folio
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Fecha Emisión
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                </SortableHeader>
+                <SortableHeader
+                  field="fecha"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
+                  Fecha Documento
+                </SortableHeader>
+                <SortableHeader
+                  field="proveedor"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
                   Proveedor
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Producto
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Cantidad
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Precio Unit.
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Monto Item
-                </th>
-                <th className="px-8 py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Tipo DTE
-                </th>
+                </SortableHeader>
+                <SortableHeader
+                  field="tipo"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
+                  Tipo Doc
+                </SortableHeader>
+                <SortableHeader
+                  field="montoNeto"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
+                  Monto Neto
+                </SortableHeader>
+                <SortableHeader
+                  field="iva"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
+                  IVA Recuperable
+                </SortableHeader>
+                <SortableHeader
+                  field="montoTotal"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
+                  Monto Total
+                </SortableHeader>
+                <SortableHeader
+                  field="estado"
+                  currentSort={sortConfig}
+                  onSort={handleSort}
+                  className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider"
+                >
+                  Estado
+                </SortableHeader>
               </tr>
             </thead>
             <tbody className="bg-white/50 divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-8 py-16 text-center">
+                  <td colSpan={8} className="px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
                     <div className="flex flex-col items-center space-y-4">
-                      <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin"></div>
-                      <p className="text-slate-500 font-medium">Cargando compras...</p>
+                      <div className="w-6 h-6 sm:w-8 sm:h-8 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin"></div>
+                      <p className="text-slate-500 font-medium text-sm sm:text-base">Cargando compras...</p>
                     </div>
                   </td>
                 </tr>
               ) : compras.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-8 py-16 text-center">
+                  <td colSpan={8} className="px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
                     <div className="flex flex-col items-center space-y-4">
-                      <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center">
-                        <FileText className="h-8 w-8 text-slate-400" />
+                      <div className="w-12 h-12 sm:w-16 sm:h-16 bg-slate-100 rounded-2xl flex items-center justify-center">
+                        <FileText className="h-6 w-6 sm:h-8 sm:w-8 text-slate-400" />
                       </div>
-                      <p className="text-slate-500 font-medium">No se encontraron registros</p>
+                      <p className="text-slate-500 font-medium text-sm sm:text-base">No se encontraron registros</p>
                     </div>
                   </td>
                 </tr>
               ) : (
-                foliosOrdenados.map((folio, folioIndex) => {
-                  const lineasFactura = comprasAgrupadas[folio];
-                  const totalFactura = lineasFactura.reduce((sum, linea) => sum + (linea.monto_item || 0), 0);
-                  
+                sortedCompras.map((compra) => {
+                  const multiplier = getDocumentMultiplier(compra.tipo_doc || '');
+                  const isCredit = multiplier === -1;
+
                   return (
-                    <React.Fragment key={folio}>
-                      {/* Separador visual entre facturas */}
-                      {folioIndex > 0 && (
-                        <tr>
-                          <td colSpan={8} className="px-8 py-2">
-                            <div className="border-t border-slate-300"></div>
-                          </td>
-                        </tr>
-                      )}
-                      
-                      {/* Header de la factura */}
-                      <tr className="bg-gradient-to-r from-orange-50/80 to-amber-50/80 border-l-4 border-orange-400">
-                        <td className="px-8 py-4 font-bold text-orange-900 text-base">
-                          📄 {folio}
-                        </td>
-                        <td className="px-8 py-4 font-semibold text-orange-800">
-                          {lineasFactura[0]?.fecha_emision ? 
-                            format(new Date(lineasFactura[0].fecha_emision), 'dd/MM/yyyy', { locale: es }) : 
-                            '-'
-                          }
-                        </td>
-                        <td className="px-8 py-4 font-semibold text-orange-800">
-                          {lineasFactura[0]?.razon_social_emisor}
-                        </td>
-                        <td className="px-8 py-4 font-semibold text-orange-700">
-                          {lineasFactura.length} línea{lineasFactura.length !== 1 ? 's' : ''}
-                        </td>
-                        <td className="px-8 py-4"></td>
-                        <td className="px-8 py-4"></td>
-                        <td className="px-8 py-4 font-bold text-orange-900 text-base">
-                          ${totalFactura.toLocaleString()}
-                        </td>
-                        <td className="px-8 py-4">
-                          <span className="inline-flex px-3 py-1.5 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">
-                            {lineasFactura[0]?.tipo_dte}
-                          </span>
-                        </td>
-                      </tr>
-                      
-                      {/* Líneas de detalle */}
-                      {lineasFactura.map((compra, lineaIndex) => (
-                        <tr key={compra.id} className="hover:bg-orange-50/30 transition-all duration-200 border-l-4 border-transparent hover:border-orange-200">
-                          <td className="px-8 py-4 pl-12 text-sm text-slate-500">
-                            ↳ Línea {compra.numero_linea}
-                          </td>
-                          <td className="px-8 py-4 text-sm text-slate-600">
-                            {compra.fecha_recepcion ? 
-                              format(new Date(compra.fecha_recepcion), 'dd/MM/yyyy HH:mm', { locale: es }) : 
-                              '-'
-                            }
-                          </td>
-                          <td className="px-8 py-4 text-sm text-slate-600">
-                            <div className="text-slate-400 text-xs">{compra.rut_emisor}</div>
-                          </td>
-                          <td className="px-8 py-4 text-sm text-slate-900">
-                            <div className="font-medium">{compra.descripcion_item}</div>
-                          </td>
-                          <td className="px-8 py-4 whitespace-nowrap text-sm text-slate-600">
-                            {compra.cantidad} {compra.unidad_medida}
-                          </td>
-                          <td className="px-8 py-4 whitespace-nowrap text-sm text-slate-600">
-                            ${(compra.precio_unitario || 0).toLocaleString()}
-                          </td>
-                          <td className="px-8 py-4 whitespace-nowrap text-sm font-semibold text-slate-900">
-                            ${(compra.monto_item || 0).toLocaleString()}
-                          </td>
-                          <td className="px-8 py-4"></td>
-                        </tr>
-                      ))}
-                    </React.Fragment>
+                    <tr key={compra.id} className={`hover:bg-orange-50/30 transition-all duration-200 ${isCredit ? 'bg-green-50/20' : ''}`}>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 font-medium text-slate-900 truncate max-w-20 sm:max-w-24 lg:max-w-full" title={compra.folio || '-'}>
+                        {compra.folio || '-'}
+                      </td>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-xs sm:text-sm text-slate-600 whitespace-nowrap">
+                        {compra.fecha_docto ?
+                          format(new Date(compra.fecha_docto), 'dd/MM/yyyy', { locale: es }) :
+                          '-'
+                        }
+                      </td>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-xs sm:text-sm text-slate-900">
+                        <div className="font-medium truncate max-w-32 sm:max-w-40 lg:max-w-full" title={compra.razon_social || '-'}>{compra.razon_social || '-'}</div>
+                        <div className="text-slate-400 text-xs truncate max-w-32 sm:max-w-40 lg:max-w-full">{compra.rut_proveedor}</div>
+                      </td>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-xs sm:text-sm text-slate-600">
+                        <span className={`inline-flex px-1.5 sm:px-2 py-0.5 sm:py-1 text-xs font-semibold rounded-full ${getDocumentTypeColor(compra.tipo_doc || '')}`}>
+                          {getDocumentTypeName(compra.tipo_doc || '')}
+                        </span>
+                      </td>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 whitespace-nowrap text-xs sm:text-sm text-slate-600">
+                        {isCredit && <span className="text-green-500">-</span>}${(compra.monto_neto || 0).toLocaleString()}
+                      </td>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 whitespace-nowrap text-xs sm:text-sm text-slate-600">
+                        {isCredit && <span className="text-green-500">-</span>}${(compra.monto_iva_recuperable || 0).toLocaleString()}
+                      </td>
+                      <td className={`px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 whitespace-nowrap text-xs sm:text-sm font-semibold ${isCredit ? 'text-green-600' : 'text-slate-900'}`}>
+                        {isCredit && <span>-</span>}${(compra.monto_total || 0).toLocaleString()}
+                      </td>
+                      <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-xs sm:text-sm">
+                        <span className="inline-flex px-1.5 sm:px-2 py-0.5 sm:py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+                          {compra.fecha_recepcion ? 'Recibida' : 'Pendiente'}
+                        </span>
+                      </td>
+                    </tr>
                   );
                 })
               )}
-            </tbody>
+             </tbody>
           </table>
         </div>
       </div>

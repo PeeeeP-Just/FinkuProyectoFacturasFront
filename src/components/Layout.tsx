@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { 
+import {
   BarChart3,
   ShoppingBag,
   Truck,
   TrendingUp,
   Menu,
-  X
+  X,
+  DollarSign,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
+import { ConnectionStatus } from './ConnectionStatus';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -15,11 +19,13 @@ interface LayoutProps {
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [activeModule, setActiveModule] = useState<string>('ventas');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const modules = [
     { id: 'ventas', name: 'Detalle Ventas', icon: ShoppingBag },
     { id: 'compras', name: 'Detalle Compras', icon: Truck },
     { id: 'flujo-caja', name: 'Flujo de Caja', icon: TrendingUp },
+    { id: 'manual-entries', name: 'Entradas Manuales', icon: DollarSign },
   ];
 
   return (
@@ -82,38 +88,51 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       {/* Desktop sidebar */}
-      <div className="hidden lg:flex lg:w-72 lg:flex-col lg:fixed lg:inset-y-0">
+      <div className={`hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 transition-all duration-300 ease-in-out ${
+        sidebarCollapsed ? 'lg:w-20' : 'lg:w-72'
+      }`}>
         <div className="flex-1 flex flex-col min-h-0 bg-white/95 backdrop-blur-xl shadow-xl border-r border-slate-200/50">
           <div className="flex-1 flex flex-col pt-8 pb-6 overflow-y-auto">
-            <div className="flex items-center space-x-4 px-8 mb-12">
-              <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg">
-                <BarChart3 className="h-6 w-6 text-white" />
+            <div className={`flex items-center ${sidebarCollapsed ? 'justify-center px-4' : 'space-x-4 px-8'} mb-12`}>
+              <div className={`bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center shadow-lg transition-all duration-200 ${
+                sidebarCollapsed ? 'w-12 h-12' : 'w-12 h-12'
+              }`}>
+                <BarChart3 className={`${sidebarCollapsed ? 'h-6 w-6' : 'h-6 w-6'} text-white`} />
               </div>
-              <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">FinanceApp</h1>
+              {!sidebarCollapsed && (
+                <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">FinanceApp</h1>
+              )}
             </div>
-            <nav className="px-6 space-y-3">
+            <nav className={`${sidebarCollapsed ? 'px-3' : 'px-6'} space-y-3`}>
               {modules.map((module) => {
                 const Icon = module.icon;
                 return (
                   <button
                     key={module.id}
                     onClick={() => setActiveModule(module.id)}
-                    className={`w-full flex items-center space-x-4 px-5 py-4 text-left rounded-xl transition-all duration-200 group ${
+                    className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'space-x-4'} px-4 py-4 text-left rounded-xl transition-all duration-200 group ${
                       activeModule === module.id
                         ? 'bg-gradient-to-r from-blue-50 to-indigo-50 text-blue-700 shadow-md border border-blue-100 scale-[1.02]'
                         : 'text-slate-700 hover:bg-slate-50 hover:shadow-sm hover:scale-[1.01]'
                     }`}
+                    title={sidebarCollapsed ? module.name : undefined}
                   >
-                    <div className={`w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-200 ${
+                    <div className={`flex items-center justify-center rounded-xl transition-all duration-200 ${
+                      sidebarCollapsed ? 'w-12 h-12' : 'w-10 h-10'
+                    } ${
                       activeModule === module.id
                         ? 'bg-gradient-to-br from-blue-100 to-indigo-100 shadow-sm'
                         : 'bg-slate-100 group-hover:bg-slate-200'
                     }`}>
-                      <Icon className={`h-5 w-5 ${
+                      <Icon className={`${
+                        sidebarCollapsed ? 'h-6 w-6' : 'h-5 w-5'
+                      } ${
                         activeModule === module.id ? 'text-blue-600' : 'text-slate-600'
                       }`} />
                     </div>
-                    <span className="font-medium tracking-tight text-base">{module.name}</span>
+                    {!sidebarCollapsed && (
+                      <span className="font-medium tracking-tight text-base">{module.name}</span>
+                    )}
                   </button>
                 );
               })}
@@ -123,18 +142,36 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       {/* Main content */}
-      <div className="lg:pl-72 flex flex-col flex-1">
+      <div className={`flex flex-col flex-1 transition-all duration-300 ease-in-out ${
+        sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-72'
+      }`}>
         <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-xl shadow-sm border-b border-slate-200/50">
           <div className="flex items-center justify-between px-8 py-6">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-100 transition-colors duration-200"
-            >
-              <Menu className="h-5 w-5 text-slate-600" />
-            </button>
-            <h2 className="text-3xl font-semibold text-slate-900 tracking-tight">
-              {modules.find(m => m.id === activeModule)?.name}
-            </h2>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-100 transition-colors duration-200"
+              >
+                <Menu className="h-5 w-5 text-slate-600" />
+              </button>
+              <button
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="hidden lg:flex w-10 h-10 items-center justify-center rounded-xl hover:bg-slate-100 transition-colors duration-200"
+                title={sidebarCollapsed ? 'Expandir menú' : 'Contraer menú'}
+              >
+                {sidebarCollapsed ? (
+                  <ChevronRight className="h-5 w-5 text-slate-600" />
+                ) : (
+                  <ChevronLeft className="h-5 w-5 text-slate-600" />
+                )}
+              </button>
+            </div>
+            <div className="flex items-center justify-between flex-1">
+              <h2 className="text-3xl font-semibold text-slate-900 tracking-tight">
+                {modules.find(m => m.id === activeModule)?.name}
+              </h2>
+              <ConnectionStatus />
+            </div>
           </div>
         </div>
         <main className="flex-1 overflow-auto p-8">

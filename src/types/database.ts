@@ -130,6 +130,8 @@ export interface RegVenta {
   codigo_otro_imp?: string;
   valor_otro_imp?: number;
   tasa_otro_imp?: number;
+  is_factored?: boolean;
+  factoring_date?: string;
   created_at?: string;
 }
 
@@ -140,4 +142,30 @@ export interface FlujoCajaItem {
   monto: number;
   acumulado: number;
   documento: string;
+  isFullyPaid?: boolean; // Indica si esta línea representa el pago completo de una factura
+  invoiceId?: number; // ID de la factura relacionada
+  invoiceType?: 'venta' | 'compra'; // Tipo de factura
+}
+
+export interface RegPago {
+  id: number;
+  reg_ventas_id?: number; // ID de la factura de venta
+  reg_compras_id?: number; // ID de la factura de compra (para pagos a proveedores)
+  fecha_pago: string; // Fecha real del pago
+  monto_pago: number; // Monto pagado en este pago específico
+  forma_pago?: string; // Forma de pago (efectivo, transferencia, cheque, etc.)
+  numero_comprobante?: string; // Número de comprobante/referencia del pago
+  banco?: string; // Banco si aplica
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ManualEntry {
+  id: number;
+  entry_type: 'expense' | 'income';
+  description: string;
+  amount: number;
+  entry_date: string;
+  created_at?: string;
+  updated_at?: string;
 }
