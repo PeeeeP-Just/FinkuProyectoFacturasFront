@@ -925,65 +925,101 @@ export const deleteProducto = async (id: number): Promise<void> => {
  console.log('✅ Producto eliminado');
 };
 
+// Función para normalizar nombres de productos eliminando información entre paréntesis
+function normalizarNombreProducto(descripcion: string): string {
+  // Eliminar información entre paréntesis, corchetes y llaves
+  let nombreBase = descripcion
+    .replace(/\([^)]*\)/g, '') // Elimina (cualquier cosa)
+    .replace(/\{[^}]*\}/g, '') // Elimina {cualquier cosa}
+    .replace(/\[[^\]]*\]/g, '') // Elimina [cualquier cosa]
+    .replace(/\s+/g, ' ') // Normalizar espacios múltiples
+    .trim();
+
+  // Si después de la normalización queda vacío, usar la descripción original
+  return nombreBase || descripcion.trim();
+}
+
 // Función para obtener descripciones propuestas (repetidas en facturas pero no mapeadas a productos)
 export const getDescripcionesPropuestas = async (minFrecuencia: number = 3): Promise<DescripcionPropuesta[]> => {
- if (!supabase) {
-   throw new Error('Supabase no está configurado');
- }
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
 
- console.log('🔍 Obteniendo descripciones propuestas con frecuencia mínima:', minFrecuencia);
+  console.log('🔍 Obteniendo descripciones propuestas con frecuencia mínima:', minFrecuencia);
 
- // Obtener todas las descripciones de facturas que no están mapeadas a productos
- const { data: facturasDetalle, error: facturasError } = await supabase
-   .from('reg_facturas_detalle')
-   .select('descripcion_item, cantidad, monto_item')
-   .not('descripcion_item', 'is', null);
+  // Obtener todas las descripciones de facturas que no están mapeadas a productos
+  const { data: facturasDetalle, error: facturasError } = await supabase
+    .from('reg_facturas_detalle')
+    .select('descripcion_item, cantidad, monto_item')
+    .not('descripcion_item', 'is', null);
 
- if (facturasError) {
-   console.error('❌ Error al obtener detalles de facturas:', facturasError);
-   throw facturasError;
- }
+  if (facturasError) {
+    console.error('❌ Error al obtener detalles de facturas:', facturasError);
+    throw facturasError;
+  }
 
- // Obtener todas las descripciones ya mapeadas
- const { data: mapeos, error: mapeosError } = await supabase
-   .from('producto_descripcion_map')
-   .select('descripcion_original');
+  // Obtener todas las descripciones ya mapeadas
+  const { data: mapeos, error: mapeosError } = await supabase
+    .from('producto_descripcion_map')
+    .select('descripcion_original');
 
- if (mapeosError) {
-   console.error('❌ Error al obtener mapeos:', mapeosError);
-   throw mapeosError;
- }
+  if (mapeosError) {
+    console.error('❌ Error al obtener mapeos:', mapeosError);
+    throw mapeosError;
+  }
 
- const descripcionesMapeadas = new Set(mapeos?.map(m => m.descripcion_original.toLowerCase()) || []);
+  const descripcionesMapeadas = new Set(mapeos?.map(m => m.descripcion_original.toLowerCase()) || []);
 
- // Agrupar y contar frecuencias
- const descripcionStats = new Map<string, { frecuencia: number; totalUnidades: number; totalIngresos: number }>();
+  // Agrupar por nombre base normalizado
+  const productosAgrupados = new Map<string, {
+    nombreBase: string;
+    descripcionesOriginales: Set<string>;
+    frecuencia: number;
+    totalUnidades: number;
+    totalIngresos: number;
+  }>();
 
- facturasDetalle?.forEach(item => {
-   const descripcion = item.descripcion_item?.trim();
-   if (!descripcion || descripcionesMapeadas.has(descripcion.toLowerCase())) return;
+  facturasDetalle?.forEach(item => {
+    const descripcionOriginal = item.descripcion_item?.trim();
+    if (!descripcionOriginal || descripcionesMapeadas.has(descripcionOriginal.toLowerCase())) return;
 
-   const existing = descripcionStats.get(descripcion) || { frecuencia: 0, totalUnidades: 0, totalIngresos: 0 };
-   existing.frecuencia += 1;
-   existing.totalUnidades += item.cantidad || 0;
-   existing.totalIngresos += item.monto_item || 0;
+    const nombreBase = normalizarNombreProducto(descripcionOriginal);
+    const nombreBaseKey = nombreBase.toLowerCase();
 
-   descripcionStats.set(descripcion, existing);
- });
+    const existing = productosAgrupados.get(nombreBaseKey) || {
+      nombreBase: nombreBase,
+      descripcionesOriginales: new Set(),
+      frecuencia: 0,
+      totalUnidades: 0,
+      totalIngresos: 0
+    };
 
- // Filtrar por frecuencia mínima y convertir a array
- const propuestas: DescripcionPropuesta[] = Array.from(descripcionStats.entries())
-   .filter(([, stats]) => stats.frecuencia >= minFrecuencia)
-   .map(([descripcion, stats]) => ({
-     descripcion,
-     frecuencia: stats.frecuencia,
-     total_unidades: stats.totalUnidades,
-     total_ingresos: stats.totalIngresos
-   }))
-   .sort((a, b) => b.frecuencia - a.frecuencia); // Ordenar por frecuencia descendente
+    existing.descripcionesOriginales.add(descripcionOriginal);
+    existing.frecuencia += 1;
+    existing.totalUnidades += item.cantidad || 0;
+    existing.totalIngresos += item.monto_item || 0;
 
- console.log('✅ Descripciones propuestas encontradas:', propuestas.length);
- return propuestas;
+    productosAgrupados.set(nombreBaseKey, existing);
+  });
+
+  // Filtrar por frecuencia mínima y convertir a array
+  const propuestas: DescripcionPropuesta[] = Array.from(productosAgrupados.values())
+    .filter(producto => producto.frecuencia >= minFrecuencia)
+    .map(producto => ({
+      descripcion: producto.nombreBase,
+      frecuencia: producto.frecuencia,
+      total_unidades: producto.totalUnidades,
+      total_ingresos: producto.totalIngresos
+    }))
+    .sort((a, b) => b.frecuencia - a.frecuencia); // Ordenar por frecuencia descendente
+
+  console.log('✅ Descripciones propuestas encontradas (agrupadas):', propuestas.length);
+  console.log('📊 Ejemplos de agrupación:');
+  propuestas.slice(0, 3).forEach(p => {
+    console.log(`  - "${p.descripcion}": ${p.frecuencia} veces, ${p.total_unidades} unidades`);
+  });
+
+  return propuestas;
 };
 
 // Función para crear productos desde descripciones propuestas
