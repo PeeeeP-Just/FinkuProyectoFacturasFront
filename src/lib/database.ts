@@ -1065,31 +1065,136 @@ export const createProductosFromDescripciones = async (
 
 // Función para mapear una descripción existente a un producto
 export const mapDescripcionToProducto = async (
- descripcion: string,
- productoId: number
+  descripcion: string,
+  productoId: number
 ): Promise<ProductoDescripcionMap> => {
- if (!supabase) {
-   throw new Error('Supabase no está configurado');
- }
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
 
- console.log('🔗 Mapeando descripción a producto:', descripcion, '->', productoId);
+  console.log('🔗 Mapeando descripción a producto:', descripcion, '->', productoId);
 
- const { data, error } = await supabase
-   .from('producto_descripcion_map')
-   .insert({
-     producto_id: productoId,
-     descripcion_original: descripcion
-   })
-   .select()
-   .single();
+  const { data, error } = await supabase
+    .from('producto_descripcion_map')
+    .insert({
+      producto_id: productoId,
+      descripcion_original: descripcion
+    })
+    .select()
+    .single();
 
- if (error) {
-   console.error('❌ Error al crear mapeo:', error);
-   throw error;
- }
+  if (error) {
+    console.error('❌ Error al crear mapeo:', error);
+    throw error;
+  }
 
- console.log('✅ Mapeo creado:', data);
- return data;
+  console.log('✅ Mapeo creado:', data);
+  return data;
+};
+
+// Función para obtener análisis simple de productos (sin mapeos)
+export const getProductosAnalyticsSimple = async (filters: {
+  dateFrom?: string;
+  dateTo?: string;
+  searchTerm?: string;
+} = {}): Promise<ProductoAnalytics[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 [DB] Obteniendo análisis simple de productos');
+
+  // Obtener productos activos
+  const productos = await getProductos(true);
+
+  if (productos.length === 0) {
+    console.log('ℹ️ No hay productos activos para analizar');
+    return [];
+  }
+
+  console.log('📦 Buscando ventas para productos:', productos.map(p => p.nombre_producto).join(', '));
+
+  const productosAnalytics: ProductoAnalytics[] = [];
+
+  for (const producto of productos) {
+    console.log(`🔍 Buscando ventas para: "${producto.nombre_producto}"`);
+
+    // Buscar ventas usando el nombre del producto directamente
+    const { data: ventas, error: ventasError } = await supabase
+      .from('reg_facturas_detalle')
+      .select(`
+        descripcion_item,
+        cantidad,
+        precio_unitario,
+        monto_item,
+        factura_id
+      `)
+      .eq('descripcion_item', producto.nombre_producto);
+
+    if (ventasError) {
+      console.error(`❌ Error al buscar ventas para ${producto.nombre_producto}:`, ventasError);
+      productosAnalytics.push({
+        descripcion_item: producto.nombre_producto,
+        total_unidades: 0,
+        total_ingresos: 0,
+        precio_promedio: 0,
+        precio_maximo: 0,
+        precio_minimo: 0,
+        numero_ventas: 0,
+        clientes_unicos: 0
+      });
+      continue;
+    }
+
+    console.log(`  📊 Encontradas ${ventas?.length || 0} ventas para ${producto.nombre_producto}`);
+
+    if (!ventas || ventas.length === 0) {
+      productosAnalytics.push({
+        descripcion_item: producto.nombre_producto,
+        total_unidades: 0,
+        total_ingresos: 0,
+        precio_promedio: 0,
+        precio_maximo: 0,
+        precio_minimo: 0,
+        numero_ventas: 0,
+        clientes_unicos: 0
+      });
+      continue;
+    }
+
+    // Calcular estadísticas
+    const totalUnidades = ventas.reduce((sum, v) => sum + (v.cantidad || 0), 0);
+    const totalIngresos = ventas.reduce((sum, v) => sum + (v.monto_item || 0), 0);
+    const precios = ventas.map(v => v.precio_unitario || 0).filter(p => p > 0);
+
+    console.log(`  ✅ ${producto.nombre_producto} - Unidades: ${totalUnidades}, Ingresos: ${totalIngresos}, Ventas: ${ventas.length}`);
+
+    productosAnalytics.push({
+      descripcion_item: producto.nombre_producto,
+      total_unidades: totalUnidades,
+      total_ingresos: totalIngresos,
+      precio_promedio: precios.length > 0 ? precios.reduce((sum, p) => sum + p, 0) / precios.length : 0,
+      precio_maximo: precios.length > 0 ? Math.max(...precios) : 0,
+      precio_minimo: precios.length > 0 ? Math.min(...precios) : 0,
+      numero_ventas: ventas.length,
+      clientes_unicos: 0
+    });
+  }
+
+  // Filtrar por término de búsqueda si existe
+  let filteredData = productosAnalytics;
+  if (filters.searchTerm && filters.searchTerm.trim() !== '') {
+    const searchLower = filters.searchTerm.toLowerCase().trim();
+    filteredData = filteredData.filter(item =>
+      item.descripcion_item?.toLowerCase().includes(searchLower)
+    );
+  }
+
+  // Ordenar por ingresos totales
+  filteredData.sort((a, b) => b.total_ingresos - a.total_ingresos);
+
+  console.log('✅ [DB] Análisis simple de productos completado:', filteredData.length, 'productos');
+  return filteredData;
 };
 
 // Función mejorada para análisis de productos usando la tabla de productos
@@ -1107,6 +1212,8 @@ export const getProductosAnalyticsMejorado = async (filters: {
 
  // Obtener productos activos
  const productos = await getProductos(true);
+ console.log('📦 Productos encontrados:', productos.length);
+ productos.forEach(p => console.log(`  - ${p.nombre_producto} (ID: ${p.id})`));
 
  if (productos.length === 0) {
    console.log('ℹ️ No hay productos activos para analizar');
@@ -1123,6 +1230,9 @@ export const getProductosAnalyticsMejorado = async (filters: {
    throw mapeosError;
  }
 
+ console.log('🔗 Mapeos encontrados:', mapeos?.length || 0);
+ mapeos?.forEach(m => console.log(`  - Producto ${m.producto_id} → "${m.descripcion_original}"`));
+
  // Crear mapa de producto -> descripciones
  const productoMapeos = new Map<number, string[]>();
  mapeos?.forEach(mapeo => {
@@ -1131,14 +1241,61 @@ export const getProductosAnalyticsMejorado = async (filters: {
    productoMapeos.set(mapeo.producto_id, existing);
  });
 
+ console.log('📋 Mapeos procesados:');
+ productoMapeos.forEach((descripciones, productoId) => {
+   console.log(`  - Producto ${productoId}: ${descripciones.length} descripciones`);
+ });
+
  // Para cada producto, obtener sus estadísticas de ventas
  const productosAnalytics: ProductoAnalytics[] = [];
 
  for (const producto of productos) {
+   console.log(`🔍 Procesando producto: ${producto.nombre_producto} (ID: ${producto.id})`);
+
    const descripciones = productoMapeos.get(producto.id) || [];
+   console.log(`  📋 Descripciones mapeadas: ${descripciones.length} - ${descripciones.join(', ')}`);
+
+   let ventas = null;
+   let ventasError = null;
 
    if (descripciones.length === 0) {
-     // Producto sin ventas
+     // Si no hay mapeos, buscar por nombre exacto del producto
+     console.log(`  ⚠️ No hay mapeos, buscando por nombre exacto: "${producto.nombre_producto}"`);
+
+     const { data, error } = await supabase
+       .from('reg_facturas_detalle')
+       .select(`
+         descripcion_item,
+         cantidad,
+         precio_unitario,
+         monto_item,
+         factura_id
+       `)
+       .eq('descripcion_item', producto.nombre_producto);
+
+     ventas = data;
+     ventasError = error;
+   } else {
+     // Buscar ventas para las descripciones mapeadas
+     console.log(`  🔍 Buscando ventas para descripciones mapeadas`);
+
+     const { data, error } = await supabase
+       .from('reg_facturas_detalle')
+       .select(`
+         descripcion_item,
+         cantidad,
+         precio_unitario,
+         monto_item,
+         factura_id
+       `)
+       .in('descripcion_item', descripciones);
+
+     ventas = data;
+     ventasError = error;
+   }
+
+   if (ventasError) {
+     console.error(`❌ Error al obtener ventas para producto ${producto.nombre_producto}:`, ventasError);
      productosAnalytics.push({
        descripcion_item: producto.nombre_producto,
        total_unidades: 0,
@@ -1152,26 +1309,10 @@ export const getProductosAnalyticsMejorado = async (filters: {
      continue;
    }
 
-   // Buscar ventas para estas descripciones
-   let query = supabase
-     .from('reg_facturas_detalle')
-     .select(`
-       descripcion_item,
-       cantidad,
-       precio_unitario,
-       monto_item,
-       factura_id
-     `)
-     .in('descripcion_item', descripciones);
-
-   const { data: ventas, error: ventasError } = await query;
-
-   if (ventasError) {
-     console.error(`❌ Error al obtener ventas para producto ${producto.nombre_producto}:`, ventasError);
-     continue;
-   }
+   console.log(`  📊 Ventas encontradas: ${ventas?.length || 0}`);
 
    if (!ventas || ventas.length === 0) {
+     console.log(`  ⚠️ No se encontraron ventas para ${producto.nombre_producto}`);
      productosAnalytics.push({
        descripcion_item: producto.nombre_producto,
        total_unidades: 0,
@@ -1189,6 +1330,12 @@ export const getProductosAnalyticsMejorado = async (filters: {
    const totalUnidades = ventas.reduce((sum, v) => sum + (v.cantidad || 0), 0);
    const totalIngresos = ventas.reduce((sum, v) => sum + (v.monto_item || 0), 0);
    const precios = ventas.map(v => v.precio_unitario || 0).filter(p => p > 0);
+
+   console.log(`  ✅ Estadísticas calculadas:`);
+   console.log(`    - Unidades: ${totalUnidades}`);
+   console.log(`    - Ingresos: ${totalIngresos}`);
+   console.log(`    - Precios: ${precios.length} valores`);
+   console.log(`    - Ventas: ${ventas.length}`);
 
    productosAnalytics.push({
      descripcion_item: producto.nombre_producto,
