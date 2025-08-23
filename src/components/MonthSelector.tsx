@@ -23,7 +23,8 @@ export const MonthSelector: React.FC<MonthSelectorProps> = ({
   const years = Array.from({ length: 10 }, (_, i) => currentYear - 5 + i);
 
   const handleMonthChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const month = parseInt(event.target.value);
+    const value = event.target.value;
+    const month = value === '' ? -1 : parseInt(value);
     onMonthChange(month, selectedYear);
   };
 
@@ -57,6 +58,7 @@ export const MonthSelector: React.FC<MonthSelectorProps> = ({
               value={selectedMonth >= 0 ? selectedMonth : ''}
               onChange={handleMonthChange}
               className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 appearance-none pr-10"
+              defaultValue=""
             >
               <option value="">Todos los meses</option>
               {months.map((month, index) => (
@@ -106,14 +108,22 @@ export const MonthSelector: React.FC<MonthSelectorProps> = ({
           </p>
         </div>
       )}
+
+      {selectedMonth === -1 && (
+        <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
+          <p className="text-sm text-blue-800 font-medium">
+            Mostrando todos los datos de {selectedYear}
+          </p>
+        </div>
+      )}
     </div>
   );
 };
 
 // Helper function to get date range from month/year selection
 export const getMonthDateRange = (month: number, year: number) => {
-  if (month < 0) {
-    // Return empty dates for "all months"
+  if (month === -1) {
+    // Return empty dates for "all months" - will show all data for the year
     return { dateFrom: '', dateTo: '' };
   }
 

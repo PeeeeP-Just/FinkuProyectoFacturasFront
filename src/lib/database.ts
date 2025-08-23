@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { getDocumentMultiplier } from './documentTypes';
-import { ManualEntry, RegVenta, RegPago } from '../types/database';
+import { ManualEntry, RegVenta, RegPago, RegFacturaDetalle } from '../types/database';
 
 // Cache connection status to avoid multiple tests
 let connectionStatus: boolean | null = null;
@@ -586,29 +586,178 @@ export const markInvoiceAsFactored = async (id: number, factoringDate: string): 
 };
 
 export const unmarkInvoiceAsFactored = async (id: number): Promise<RegVenta> => {
- if (!supabase) {
-   throw new Error('Supabase no está configurado');
- }
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
 
- console.log('🏦 Desmarcando factura como factorizada:', id);
+  console.log('🏦 Desmarcando factura como factorizada:', id);
 
- const { data, error } = await supabase
-   .from('reg_ventas')
-   .update({
-     is_factored: false,
-     factoring_date: null
-   })
-   .eq('id', id)
-   .select()
-   .single();
+  const { data, error } = await supabase
+    .from('reg_ventas')
+    .update({
+      is_factored: false,
+      factoring_date: null
+    })
+    .eq('id', id)
+    .select()
+    .single();
 
- if (error) {
-   console.error('❌ Error al desmarcar factura como factorizada:', error);
-   throw error;
- }
+  if (error) {
+    console.error('❌ Error al desmarcar factura como factorizada:', error);
+    throw error;
+  }
 
- console.log('✅ Factura desmarcada como factorizada:', data);
- return data;
+  console.log('✅ Factura desmarcada como factorizada:', data);
+  return data;
+};
+
+// Función para obtener el detalle de una factura de venta específica
+export const getVentasDetalle = async (facturaId: number): Promise<RegFacturaDetalle[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 Obteniendo detalle de venta para factura ID:', facturaId);
+
+  const { data, error } = await supabase
+    .from('reg_facturas_detalle')
+    .select('*')
+    .eq('factura_id', facturaId)
+    .order('numero_linea', { ascending: true });
+
+  if (error) {
+    console.error('❌ Error al obtener detalle de venta:', error);
+    throw error;
+  }
+
+  console.log('✅ Detalle de venta obtenido:', data?.length || 0, 'líneas');
+  return data || [];
+};
+
+// Interface para análisis de productos
+export interface ProductoAnalytics {
+  descripcion_item: string;
+  total_unidades: number;
+  total_ingresos: number;
+  precio_promedio: number;
+  precio_maximo: number;
+  precio_minimo: number;
+  numero_ventas: number;
+  clientes_unicos: number;
+}
+
+// Función para obtener análisis de productos vendidos
+export const getProductosAnalytics = async (filters: {
+  dateFrom?: string;
+  dateTo?: string;
+  searchTerm?: string;
+} = {}): Promise<ProductoAnalytics[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 [DB] Obteniendo análisis de productos con filtros:', filters);
+
+  // Construir query base
+  let query = supabase
+    .from('reg_facturas_detalle')
+    .select(`
+      descripcion_item,
+      cantidad,
+      precio_unitario,
+      monto_item,
+      factura_id,
+      reg_facturas_xml!inner(
+        fecha_emision
+      )
+    `)
+    .not('descripcion_item', 'is', null)
+    .not('cantidad', 'is', null)
+    .not('precio_unitario', 'is', null);
+
+  // Aplicar filtros de fecha
+  if (filters.dateFrom && filters.dateFrom.trim() !== '') {
+    query = query.gte('reg_facturas_xml.fecha_emision', filters.dateFrom);
+  }
+  if (filters.dateTo && filters.dateTo.trim() !== '') {
+    query = query.lte('reg_facturas_xml.fecha_emision', filters.dateTo);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('❌ Error al obtener análisis de productos:', error);
+    throw error;
+  }
+
+  // Filtrar por término de búsqueda si existe
+  let filteredData = data || [];
+  if (filters.searchTerm && filters.searchTerm.trim() !== '') {
+    const searchLower = filters.searchTerm.toLowerCase().trim();
+    filteredData = filteredData.filter(item =>
+      item.descripcion_item?.toLowerCase().includes(searchLower)
+    );
+  }
+
+  // Obtener información adicional de las facturas (fechas y clientes)
+  // Nota: Para simplificar, por ahora trabajaremos solo con los datos disponibles
+  // Si necesitas filtros por fecha, necesitarías hacer joins más complejos
+
+  // Agrupar por descripción del producto
+  const productosMap = new Map<string, {
+    descripcion_item: string;
+    unidades: number[];
+    precios: number[];
+    ingresos: number[];
+    numero_ventas: number;
+  }>();
+
+  filteredData.forEach(item => {
+    const descripcion = item.descripcion_item || 'Sin descripción';
+    const cantidad = item.cantidad || 0;
+    const precio = item.precio_unitario || 0;
+    const ingreso = item.monto_item || 0;
+
+    if (!productosMap.has(descripcion)) {
+      productosMap.set(descripcion, {
+        descripcion_item: descripcion,
+        unidades: [],
+        precios: [],
+        ingresos: [],
+        numero_ventas: 0
+      });
+    }
+
+    const producto = productosMap.get(descripcion)!;
+    producto.unidades.push(cantidad);
+    producto.precios.push(precio);
+    producto.ingresos.push(ingreso);
+    producto.numero_ventas += 1;
+  });
+
+  // Calcular estadísticas para cada producto
+  const productosAnalytics: ProductoAnalytics[] = Array.from(productosMap.values()).map(producto => {
+    const totalUnidades = producto.unidades.reduce((sum, u) => sum + u, 0);
+    const totalIngresos = producto.ingresos.reduce((sum, i) => sum + i, 0);
+    const precios = producto.precios.filter(p => p > 0);
+
+    return {
+      descripcion_item: producto.descripcion_item,
+      total_unidades: totalUnidades,
+      total_ingresos: totalIngresos,
+      precio_promedio: precios.length > 0 ? precios.reduce((sum, p) => sum + p, 0) / precios.length : 0,
+      precio_maximo: precios.length > 0 ? Math.max(...precios) : 0,
+      precio_minimo: precios.length > 0 ? Math.min(...precios) : 0,
+      numero_ventas: producto.numero_ventas,
+      clientes_unicos: 0 // Por ahora no calculamos clientes únicos, se puede implementar más tarde
+    };
+  });
+
+  // Ordenar por total de ingresos (descendente)
+  productosAnalytics.sort((a, b) => b.total_ingresos - a.total_ingresos);
+
+  console.log('✅ [DB] Análisis de productos obtenido:', productosAnalytics.length, 'productos');
+  return productosAnalytics;
 };
 
 // Group related documents (invoices with their credit notes)

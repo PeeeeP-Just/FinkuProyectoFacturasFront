@@ -21,6 +21,7 @@ import { MonthSelector, getMonthDateRange } from './MonthSelector';
 import { getDocumentTypeName, getDocumentTypeColor, getDocumentMultiplier } from '../lib/documentTypes';
 import { CompactFilterBar } from './CompactFilterBar';
 import { SortableHeader, SortDirection } from './SortableHeader';
+import { VentasDetalleModal } from './VentasDetalleModal';
 
 export const VentasModule: React.FC = () => {
   const [ventas, setVentas] = useState<RegVenta[]>([]);
@@ -47,6 +48,14 @@ export const VentasModule: React.FC = () => {
     direction: SortDirection;
   } | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(false); // Prevent multiple API calls
+  const [showDetalleModal, setShowDetalleModal] = useState(false);
+  const [selectedDetalleFactura, setSelectedDetalleFactura] = useState<{
+    id: number;
+    folio: string;
+    cliente: string;
+    fecha: string;
+    total: number;
+  } | null>(null);
 
   const fetchVentas = async () => {
     if (isLoadingData) return; // Prevent multiple simultaneous calls
@@ -221,6 +230,22 @@ export const VentasModule: React.FC = () => {
     }
 
     setSortConfig(direction ? { field, direction } : null);
+  };
+
+  const handleShowDetalle = (invoice: RegVenta) => {
+    setSelectedDetalleFactura({
+      id: invoice.id,
+      folio: invoice.folio || invoice.nro?.toString() || '',
+      cliente: invoice.razon_social || '-',
+      fecha: invoice.fecha_docto || '',
+      total: invoice.monto_total || 0
+    });
+    setShowDetalleModal(true);
+  };
+
+  const closeDetalleModal = () => {
+    setShowDetalleModal(false);
+    setSelectedDetalleFactura(null);
   };
 
   // Fetch data when connection is established and filters are initialized
@@ -545,7 +570,11 @@ export const VentasModule: React.FC = () => {
                   return (
                     <React.Fragment key={originalInvoice.id}>
                       {/* Original Invoice Row */}
-                      <tr className={`hover:bg-blue-50/30 transition-all duration-200 ${group.isFullyCancelled ? 'bg-green-50/30' : ''}`}>
+                      <tr
+                        className={`hover:bg-blue-50/30 transition-all duration-200 cursor-pointer ${group.isFullyCancelled ? 'bg-green-50/30' : ''}`}
+                        onClick={() => handleShowDetalle(originalInvoice)}
+                        title="Click para ver detalle"
+                      >
                         <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-center">
                           <input
                             type="checkbox"
@@ -758,6 +787,19 @@ export const VentasModule: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Ventas Detalle Modal */}
+      {showDetalleModal && selectedDetalleFactura && (
+        <VentasDetalleModal
+          isOpen={showDetalleModal}
+          onClose={closeDetalleModal}
+          facturaId={selectedDetalleFactura.id}
+          facturaFolio={selectedDetalleFactura.folio}
+          cliente={selectedDetalleFactura.cliente}
+          fecha={selectedDetalleFactura.fecha}
+          total={selectedDetalleFactura.total}
+        />
       )}
     </div>
   );

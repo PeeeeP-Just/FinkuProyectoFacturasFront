@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { FlujoCajaItem, RegVenta, RegCompra, ManualEntry } from '../types/database';
+import { FlujoCajaItem, RegVenta, RegCompra, ManualEntry, RegPago } from '../types/database';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { getManualEntries, groupRelatedDocuments } from '../lib/database';
@@ -11,7 +11,8 @@ import {
   DollarSign,
   BarChart3,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  Check
 } from 'lucide-react';
 import { MonthSelector, getMonthDateRange } from './MonthSelector';
 import { CashFlowChart } from './CashFlowChart';
@@ -26,7 +27,7 @@ export const FlujoCajaModule: React.FC = () => {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const currentDate = new Date();
-  const [selectedMonth, setSelectedMonth] = useState<number>(currentDate.getMonth()); // Current month by default
+  const [selectedMonth, setSelectedMonth] = useState<number>(currentDate.getMonth()); // Current month by default, -1 for "all months"
   const [selectedYear, setSelectedYear] = useState<number>(currentDate.getFullYear());
   const [soloMes, setSoloMes] = useState<boolean>(true); // Default to month-only mode
   const [sortConfig, setSortConfig] = useState<{
@@ -34,6 +35,104 @@ export const FlujoCajaModule: React.FC = () => {
     direction: SortDirection;
   } | null>(null);
 
+
+  // Función auxiliar para obtener la fecha correcta de pago para una factura
+  const getPaymentDate = (invoiceId: number, invoiceType: 'venta' | 'compra', facturasXml: any[], pagos: any[]): string => {
+    console.log(`🔍 Buscando pago para ${invoiceType} ID ${invoiceId}`);
+    console.log(`🔍 Total facturas XML disponibles:`, facturasXml.length);
+    console.log(`🔍 Total pagos disponibles:`, pagos.length);
+
+    // Paso 1: Encontrar la factura XML relacionada
+    const facturaXml = facturasXml.find(xml => {
+      if (invoiceType === 'venta') {
+        return xml.reg_ventas_id === invoiceId;
+      } else if (invoiceType === 'compra') {
+        return xml.reg_compras_id === invoiceId;
+      }
+      return false;
+    });
+
+    if (!facturaXml) {
+      console.log(`🔍 No se encontró factura XML para ${invoiceType} ID ${invoiceId}`);
+      return '';
+    }
+
+    console.log(`🔍 Factura XML encontrada:`, facturaXml);
+
+    // Paso 2: Encontrar el pago relacionado con la factura XML
+    const pago = pagos.find(p => {
+      const match = p.factura_id === facturaXml.id;
+      if (match) {
+        console.log(`🔍 Pago encontrado:`, p);
+        console.log(`🔍 Campos del pago:`, Object.keys(p));
+      }
+      return match;
+    });
+
+    // Posibles nombres de campos para fecha_pago
+    const result = pago?.fecha_pago || pago?.fecha || '';
+    console.log(`🔍 Resultado getPaymentDate para ${invoiceType} ID ${invoiceId}:`, result);
+    return result;
+  };
+
+  // Función auxiliar para verificar si una factura está completamente pagada
+  const isInvoiceFullyPaid = (invoiceId: number, invoiceType: 'venta' | 'compra', montoTotal: number, facturasXml: any[], pagos: any[]): boolean => {
+    console.log(`🔍 Verificando pagos completos para ${invoiceType} ID ${invoiceId}, monto total: ${montoTotal}`);
+
+    // Paso 1: Encontrar la factura XML relacionada
+    const facturaXml = facturasXml.find(xml => {
+      if (invoiceType === 'venta') {
+        return xml.reg_ventas_id === invoiceId;
+      } else if (invoiceType === 'compra') {
+        return xml.reg_compras_id === invoiceId;
+      }
+      return false;
+    });
+
+    if (!facturaXml) {
+      console.log(`🔍 No se encontró factura XML para ${invoiceType} ID ${invoiceId}`);
+      return false;
+    }
+
+    console.log(`🔍 Factura XML encontrada:`, facturaXml);
+
+    // Paso 2: Encontrar los pagos relacionados con la factura XML
+    const pagosFactura = pagos.filter(p => p.factura_id === facturaXml.id);
+
+    console.log(`🔍 Pagos encontrados para ${invoiceType} ID ${invoiceId}:`, pagosFactura.length);
+
+    const totalPagado = pagosFactura.reduce((sum, pago) => {
+      const monto = pago.monto_pago || pago.monto || 0;
+      console.log(`🔍 Pago monto:`, monto);
+      return sum + monto;
+    }, 0);
+
+    const isFullyPaid = totalPagado >= montoTotal;
+    console.log(`🔍 Total pagado: ${totalPagado}, Total factura: ${montoTotal}, ¿Completamente pagada?: ${isFullyPaid}`);
+
+    return isFullyPaid;
+  };
+
+  // Función auxiliar para obtener la fecha de emisión de reg_facturas_xml para facturas con nota de crédito
+  const getEmissionDateForInvoiceWithCreditNote = (invoiceId: number, facturasXml: any[]): string => {
+    console.log(`🔍 Buscando fecha de emisión para factura con nota de crédito ID ${invoiceId}`);
+
+    // Paso 1: Encontrar la factura XML relacionada con la venta
+    const facturaXml = facturasXml.find(xml => xml.reg_ventas_id === invoiceId);
+
+    if (!facturaXml) {
+      console.log(`🔍 No se encontró factura XML para venta ID ${invoiceId}`);
+      return '';
+    }
+
+    console.log(`🔍 Factura XML encontrada:`, facturaXml);
+
+    // Paso 2: Obtener la fecha de emisión (puede estar en diferentes campos)
+    const fechaEmision = facturaXml.fecha_emision || facturaXml.created_at || '';
+
+    console.log(`🔍 Fecha de emisión encontrada:`, fechaEmision);
+    return fechaEmision;
+  };
 
   const fetchFlujoCaja = async () => {
     console.log('💰 Iniciando fetchFlujoCaja...');
@@ -56,14 +155,9 @@ export const FlujoCajaModule: React.FC = () => {
         .select('*')
         .order('fecha_docto', { ascending: true });
 
-      if (soloMes && dateFrom) {
-        console.log('Filtro ventas fecha desde:', dateFrom);
-        ventasQuery = ventasQuery.gte('fecha_docto', dateFrom);
-      }
-      if (soloMes && dateTo) {
-        console.log('Filtro ventas fecha hasta:', dateTo);
-        ventasQuery = ventasQuery.lte('fecha_docto', dateTo);
-      }
+      // NOTA: No filtramos ventas por fecha_docto cuando soloMes=true
+      // porque queremos mostrar todas las ventas que tienen pagos en el período seleccionado
+      // El filtrado por fecha_pago se hará después en el procesamiento
 
       // Obtener compras
       console.log('📉 Consultando compras...');
@@ -72,13 +166,31 @@ export const FlujoCajaModule: React.FC = () => {
         .select('*')
         .order('fecha_docto', { ascending: true });
 
+      // NOTA: No filtramos compras por fecha_docto cuando soloMes=true
+      // porque queremos mostrar todas las compras que tienen pagos en el período seleccionado
+      // El filtrado por fecha_pago se hará después en el procesamiento
+
+      // Obtener detalles de facturas XML
+      console.log('📄 Consultando detalles de facturas XML...');
+      let facturasXmlQuery = supabase
+        .from('reg_facturas_xml')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      // Obtener pagos
+      console.log('💳 Consultando pagos...');
+      let pagosQuery = supabase
+        .from('reg_facturas_pagos')
+        .select('*')
+        .order('fecha_pago', { ascending: true });
+
       if (soloMes && dateFrom) {
-        console.log('Filtro compras fecha desde:', dateFrom);
-        comprasQuery = comprasQuery.gte('fecha_docto', dateFrom);
+        console.log('Filtro pagos fecha desde:', dateFrom);
+        pagosQuery = pagosQuery.gte('fecha_pago', dateFrom);
       }
       if (soloMes && dateTo) {
-        console.log('Filtro compras fecha hasta:', dateTo);
-        comprasQuery = comprasQuery.lte('fecha_docto', dateTo);
+        console.log('Filtro pagos fecha hasta:', dateTo);
+        pagosQuery = pagosQuery.lte('fecha_pago', dateTo);
       }
 
       // Obtener entradas manuales
@@ -88,26 +200,42 @@ export const FlujoCajaModule: React.FC = () => {
         dateTo: soloMes ? (dateTo || undefined) : undefined
       });
 
-      const [ventasResult, comprasResult] = await Promise.all([
+      const [ventasResult, comprasResult, facturasXmlResult, pagosResult] = await Promise.all([
         ventasQuery,
-        comprasQuery
+        comprasQuery,
+        facturasXmlQuery,
+        pagosQuery
       ]);
 
       console.log('📋 Resultados:');
       console.log('Ventas - Error:', ventasResult.error, 'Datos:', ventasResult.data?.length || 0);
       console.log('Compras - Error:', comprasResult.error, 'Datos:', comprasResult.data?.length || 0);
+      console.log('Facturas XML - Error:', facturasXmlResult.error, 'Datos:', facturasXmlResult.data?.length || 0);
+      console.log('Pagos - Error:', pagosResult.error, 'Datos:', pagosResult.data?.length || 0);
       console.log('Manual Entries:', manualEntries.length);
 
       if (ventasResult.error) throw ventasResult.error;
       if (comprasResult.error) throw comprasResult.error;
+      if (facturasXmlResult.error) throw facturasXmlResult.error;
+      if (pagosResult.error) throw pagosResult.error;
 
       const ventas = ventasResult.data || [];
       const compras = comprasResult.data || [];
+      const facturasXml = facturasXmlResult.data || [];
+      const pagos = pagosResult.data || [];
 
       console.log('💰 Procesando flujo de caja...');
       console.log('Ventas a procesar:', ventas.length);
       console.log('Compras a procesar:', compras.length);
+      console.log('Facturas XML a procesar:', facturasXml.length);
+      console.log('Pagos a procesar:', pagos.length);
       console.log('Entradas manuales a procesar:', manualEntries.length);
+
+      // Debug: mostrar estructura de pagos
+      if (pagos.length > 0) {
+        console.log('🔍 Estructura de pagos (primer registro):', pagos[0]);
+        console.log('🔍 Campos disponibles en pagos:', Object.keys(pagos[0]));
+      }
 
       // Convertir a items de flujo de caja
       const flujoItems: FlujoCajaItem[] = [];
@@ -119,10 +247,34 @@ export const FlujoCajaModule: React.FC = () => {
       for (const group of documentGroups) {
         const originalInvoice = group.original;
 
-        // Use factoring date if available, otherwise fecha_recepcion, then fecha_docto
-        const fechaPago = (originalInvoice.is_factored && originalInvoice.factoring_date
-          ? originalInvoice.factoring_date
-          : (originalInvoice.fecha_recepcion || originalInvoice.fecha_docto || ''));
+        // NEW: Check if invoice has credit notes and get emission date from reg_facturas_xml
+        let fechaPago = '';
+        if (group.creditNotes.length > 0) {
+          // If invoice has credit notes, use emission date from reg_facturas_xml
+          const emissionDate = getEmissionDateForInvoiceWithCreditNote(originalInvoice.id, facturasXml);
+          if (emissionDate) {
+            fechaPago = emissionDate;
+            console.log(`🔍 Venta ID ${originalInvoice.id} - Tiene nota de crédito, usando fecha de emisión:`, fechaPago);
+          }
+        }
+
+        // If no emission date from XML (or no credit notes), use normal payment date logic
+        if (!fechaPago) {
+          const paymentDate = getPaymentDate(originalInvoice.id, 'venta', facturasXml, pagos);
+          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha pago encontrada:`, paymentDate);
+          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha factoring:`, originalInvoice.factoring_date);
+          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha documento:`, originalInvoice.fecha_docto);
+
+          fechaPago = paymentDate ||
+            (originalInvoice.is_factored && originalInvoice.factoring_date
+              ? originalInvoice.factoring_date
+              : originalInvoice.fecha_docto || '');
+
+          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha final seleccionada (sin nota de crédito):`, fechaPago);
+        }
+
+        // Check if invoice is fully paid
+        const isFullyPaid = isInvoiceFullyPaid(originalInvoice.id, 'venta', originalInvoice.monto_total || 0, facturasXml, pagos);
 
         if (fechaPago) {
           flujoItems.push({
@@ -133,7 +285,10 @@ export const FlujoCajaModule: React.FC = () => {
               : `Venta ${originalInvoice.folio || originalInvoice.nro} - ${originalInvoice.razon_social || 'Cliente'}${originalInvoice.is_factored ? ' (Factorizada)' : ''}`,
             monto: originalInvoice.monto_total || 0,
             acumulado: 0,
-            documento: originalInvoice.folio || originalInvoice.nro?.toString() || ''
+            documento: originalInvoice.folio || originalInvoice.nro?.toString() || '',
+            isFullyPaid: isFullyPaid && !group.isFullyCancelled,
+            invoiceId: originalInvoice.id,
+            invoiceType: 'venta'
           });
         }
 
@@ -155,8 +310,12 @@ export const FlujoCajaModule: React.FC = () => {
 
       // Agregar egresos (compras) con fechas de pago reales
       for (const compra of compras) {
-        // Use fecha_docto as payment date
-        const fechaPago = compra.fecha_docto || '';
+        // Get the payment date: first check if there's a payment record, then use document date
+        const paymentDate = getPaymentDate(compra.id, 'compra', facturasXml, pagos);
+        const fechaPago = paymentDate || compra.fecha_docto || '';
+
+        // Check if purchase is fully paid
+        const isFullyPaid = isInvoiceFullyPaid(compra.id, 'compra', compra.monto_total || 0, facturasXml, pagos);
 
         if (fechaPago) {
           flujoItems.push({
@@ -165,7 +324,10 @@ export const FlujoCajaModule: React.FC = () => {
             descripcion: `Compra ${compra.folio || compra.nro} - ${compra.razon_social || 'Proveedor'}`,
             monto: compra.monto_total || 0,
             acumulado: 0,
-            documento: compra.folio || compra.nro?.toString() || ''
+            documento: compra.folio || compra.nro?.toString() || '',
+            isFullyPaid: isFullyPaid,
+            invoiceId: compra.id,
+            invoiceType: 'compra'
           });
         }
       }
@@ -191,7 +353,7 @@ export const FlujoCajaModule: React.FC = () => {
         const firstDayOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
         const firstDate = firstDayOfMonth.toISOString().split('T')[0];
 
-        const [ventasAnterioresResult, comprasAnterioresResult] = await Promise.all([
+        const [ventasAnterioresResult, comprasAnterioresResult, facturasXmlAnterioresResult, pagosAnterioresResult] = await Promise.all([
           supabase
             .from('reg_ventas')
             .select('*')
@@ -201,7 +363,16 @@ export const FlujoCajaModule: React.FC = () => {
             .from('reg_compras')
             .select('*')
             .lt('fecha_docto', firstDate)
-            .order('fecha_docto', { ascending: true })
+            .order('fecha_docto', { ascending: true }),
+          supabase
+            .from('reg_facturas_xml')
+            .select('*')
+            .order('created_at', { ascending: true }),
+          supabase
+            .from('reg_facturas_pagos')
+            .select('*')
+            .lt('fecha_pago', firstDate)
+            .order('fecha_pago', { ascending: true })
         ]);
 
         // Calcular acumulado histórico
@@ -220,10 +391,30 @@ export const FlujoCajaModule: React.FC = () => {
           });
         }
 
+        // Apply same logic for historical data: if invoice has credit notes, use emission date from reg_facturas_xml
+        // Note: This would require additional logic to get emission dates for historical data,
+        // but since this is for historical calculations, we keep the existing logic for now
+
         if (comprasAnterioresResult.data) {
           comprasAnterioresResult.data.forEach(compra => {
             const multiplier = getDocumentMultiplier(compra.tipo_doc || '');
             acumuladoHistorico -= (compra.monto_total || 0) * multiplier;
+          });
+        }
+
+        // Restar pagos anteriores (egresos)
+        if (facturasXmlAnterioresResult.data && pagosAnterioresResult.data) {
+          pagosAnterioresResult.data.forEach(pago => {
+            // Encontrar la factura XML relacionada con el pago
+            const facturaXml = facturasXmlAnterioresResult.data.find((xml: any) => xml.id === pago.factura_id);
+
+            if (facturaXml) {
+              // Si la factura XML está relacionada con una compra (es un egreso)
+              if (facturaXml.reg_compras_id) {
+                const monto = pago.monto_pago || pago.monto || 0;
+                acumuladoHistorico -= monto;
+              }
+            }
           });
         }
 
@@ -243,6 +434,11 @@ export const FlujoCajaModule: React.FC = () => {
         // Ahora procesar solo los items del mes seleccionado con el acumulado histórico
         const itemsDelMes = flujoItems.filter(item => {
           const itemDate = parseISO(item.fecha);
+          // Si selectedMonth es -1 (caso "Todos los meses"), mostrar todos los del año
+          if (selectedMonth === -1) {
+            return itemDate.getFullYear() === selectedYear;
+          }
+          // Si no, filtrar por mes específico
           return itemDate.getMonth() === selectedMonth && itemDate.getFullYear() === selectedYear;
         });
 
@@ -264,6 +460,11 @@ export const FlujoCajaModule: React.FC = () => {
         // Modo "Solo mes": calcular acumulado desde el inicio del mes
         const itemsDelMes = flujoItems.filter(item => {
           const itemDate = parseISO(item.fecha);
+          // Si selectedMonth es -1 (caso "Todos los meses"), mostrar todos los del año
+          if (selectedMonth === -1) {
+            return itemDate.getFullYear() === selectedYear;
+          }
+          // Si no, filtrar por mes específico
           return itemDate.getMonth() === selectedMonth && itemDate.getFullYear() === selectedYear;
         });
 
@@ -283,18 +484,12 @@ export const FlujoCajaModule: React.FC = () => {
         setFlujo(itemsDelMes);
       }
 
-      // Filtrar solo los items del mes seleccionado para mostrar en la tabla
-      const itemsDelMes = flujoItems.filter(item => {
-        const itemDate = parseISO(item.fecha);
-        return itemDate.getMonth() === selectedMonth && itemDate.getFullYear() === selectedYear;
-      });
-
       console.log('💰 Flujo de caja procesado correctamente');
       console.log('Items totales procesados:', flujoItems.length);
-      console.log('Items del mes para tabla:', itemsDelMes.length);
+      console.log('Items del mes para tabla:', flujo.length);
 
       setFlujoCompleto(flujoItems); // Guardar todos los datos para cálculos de acumulado
-      setFlujo(itemsDelMes); // Mostrar solo los del mes en la tabla
+      // setFlujo ya está configurado correctamente en los bloques anteriores con los items filtrados por fecha de pago
     } catch (error) {
       console.error('❌ Error al obtener flujo de caja:', error);
     }
@@ -485,6 +680,9 @@ export const FlujoCajaModule: React.FC = () => {
                 >
                   Fecha
                 </SortableHeader>
+                <th className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-xs sm:text-sm font-semibold text-slate-900 tracking-tight">
+                  Estado
+                </th>
                 <SortableHeader
                   field="tipo"
                   currentSort={sortConfig}
@@ -530,7 +728,7 @@ export const FlujoCajaModule: React.FC = () => {
             <tbody className="bg-white/50 divide-y divide-slate-200">
                {loading ? (
                  <tr>
-                   <td colSpan={6} className="px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
+                   <td colSpan={7} className="px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
                      <div className="flex flex-col items-center space-y-4">
                        <div className="w-6 h-6 sm:w-8 sm:h-8 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
                        <p className="text-slate-500 font-medium text-sm sm:text-base">Cargando flujo de caja...</p>
@@ -539,7 +737,7 @@ export const FlujoCajaModule: React.FC = () => {
                  </tr>
                ) : flujo.length === 0 ? (
                  <tr>
-                   <td colSpan={6} className="px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
+                   <td colSpan={7} className="px-4 sm:px-6 lg:px-8 py-12 sm:py-16 text-center">
                      <div className="flex flex-col items-center space-y-4">
                        <div className="w-12 h-12 sm:w-16 sm:h-16 bg-slate-100 rounded-2xl flex items-center justify-center">
                          <BarChart3 className="h-6 w-6 sm:h-8 sm:w-8 text-slate-400" />
@@ -586,6 +784,13 @@ export const FlujoCajaModule: React.FC = () => {
                        item.acumulado >= 0 ? 'text-indigo-600' : 'text-red-600'
                      }`}>
                        ${item.acumulado.toLocaleString()}
+                     </td>
+                     <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 whitespace-nowrap text-center">
+                       {item.isFullyPaid ? (
+                         <Check className="h-5 w-5 text-green-600 mx-auto" />
+                       ) : (
+                         <span className="text-slate-300">-</span>
+                       )}
                      </td>
                    </tr>
                  ))
