@@ -5,6 +5,7 @@ import { ComprasModule } from './components/ComprasModule';
 import { FlujoCajaModule } from './components/FlujoCajaModule';
 import { ManualEntriesModule } from './components/ManualEntriesModule';
 import { ProductosModule } from './components/ProductosModule';
+import { GestionProductosModule } from './components/GestionProductosModule';
 import { EnvStatus } from './components/EnvStatus';
 import { EnvFileChecker } from './components/EnvFileChecker';
 
@@ -58,12 +59,14 @@ const AppContent: React.FC<AppContentProps> = ({ activeModule }) => {
       return <VentasModule />;
     case 'compras':
       return <ComprasModule />;
+    case 'productos':
+      return <ProductosModule />;
+    case 'gestion-productos':
+      return <GestionProductosModule />;
     case 'flujo-caja':
       return <FlujoCajaModule />;
     case 'manual-entries':
       return <ManualEntriesModule />;
-    case 'productos':
-      return <ProductosModule />;
     default:
       return <VentasModule />;
   }

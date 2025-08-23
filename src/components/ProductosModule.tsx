@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getProductosAnalytics, ProductoAnalytics } from '../lib/database';
+import { getProductosAnalyticsMejorado, ProductoAnalytics } from '../lib/database';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -55,7 +55,7 @@ export const ProductosModule: React.FC = () => {
     console.log('📊 Obteniendo análisis de productos con filtros:', filterParams);
 
     try {
-      const data = await getProductosAnalytics(filterParams);
+      const data = await getProductosAnalyticsMejorado(filterParams);
       console.log('✅ Análisis de productos obtenido:', data.length, 'productos');
       setProductos(data);
     } catch (error) {

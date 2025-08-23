@@ -161,11 +161,37 @@ export interface RegPago {
 }
 
 export interface ManualEntry {
-  id: number;
-  entry_type: 'expense' | 'income';
-  description: string;
-  amount: number;
-  entry_date: string;
-  created_at?: string;
-  updated_at?: string;
+   id: number;
+   entry_type: 'expense' | 'income';
+   description: string;
+   amount: number;
+   entry_date: string;
+   created_at?: string;
+   updated_at?: string;
+}
+
+export interface Producto {
+   id: number;
+   nombre_producto: string;
+   descripcion?: string;
+   codigo_interno?: string;
+   categoria?: string;
+   precio_sugerido?: number;
+   activo: boolean;
+   created_at?: string;
+   updated_at?: string;
+}
+
+export interface ProductoDescripcionMap {
+   id: number;
+   producto_id: number;
+   descripcion_original: string;
+   created_at?: string;
+}
+
+export interface DescripcionPropuesta {
+   descripcion: string;
+   frecuencia: number;
+   total_unidades: number;
+   total_ingresos: number;
 }

@@ -9,7 +9,8 @@ import {
   DollarSign,
   ChevronLeft,
   ChevronRight,
-  Package
+  Package,
+  Settings
 } from 'lucide-react';
 import { ConnectionStatus } from './ConnectionStatus';
 
@@ -26,6 +27,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     { id: 'ventas', name: 'Detalle Ventas', icon: ShoppingBag },
     { id: 'compras', name: 'Detalle Compras', icon: Truck },
     { id: 'productos', name: 'Análisis Productos', icon: Package },
+    { id: 'gestion-productos', name: 'Gestión Productos', icon: Settings },
     { id: 'flujo-caja', name: 'Flujo de Caja', icon: TrendingUp },
     { id: 'manual-entries', name: 'Entradas Manuales', icon: DollarSign },
   ];

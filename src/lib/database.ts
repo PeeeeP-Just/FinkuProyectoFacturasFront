@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { getDocumentMultiplier } from './documentTypes';
-import { ManualEntry, RegVenta, RegPago, RegFacturaDetalle } from '../types/database';
+import { ManualEntry, RegVenta, RegPago, RegFacturaDetalle, Producto, ProductoDescripcionMap, DescripcionPropuesta } from '../types/database';
 
 // Cache connection status to avoid multiple tests
 let connectionStatus: boolean | null = null;
@@ -822,5 +822,373 @@ export const groupRelatedDocuments = (documents: RegVenta[]): Array<{
      };
    })
    .sort((a, b) => new Date(a.original.fecha_docto || '').getTime() - new Date(b.original.fecha_docto || '').getTime());
+};
+
+// === PRODUCTOS FUNCTIONS ===
+
+// Función para obtener todos los productos
+export const getProductos = async (activo?: boolean): Promise<Producto[]> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('📦 Obteniendo productos...', activo !== undefined ? `activo: ${activo}` : 'todos');
+
+ let query = supabase
+   .from('productos')
+   .select('*')
+   .order('nombre_producto');
+
+ if (activo !== undefined) {
+   query = query.eq('activo', activo);
+ }
+
+ const { data, error } = await query;
+
+ if (error) {
+   console.error('❌ Error al obtener productos:', error);
+   throw error;
+ }
+
+ console.log('✅ Productos obtenidos:', data?.length || 0);
+ return data || [];
+};
+
+// Función para crear un producto
+export const createProducto = async (producto: Omit<Producto, 'id' | 'created_at' | 'updated_at'>): Promise<Producto> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('➕ Creando producto:', producto);
+
+ const { data, error } = await supabase
+   .from('productos')
+   .insert(producto)
+   .select()
+   .single();
+
+ if (error) {
+   console.error('❌ Error al crear producto:', error);
+   throw error;
+ }
+
+ console.log('✅ Producto creado:', data);
+ return data;
+};
+
+// Función para actualizar un producto
+export const updateProducto = async (id: number, producto: Partial<Omit<Producto, 'id' | 'created_at'>>): Promise<Producto> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('✏️ Actualizando producto ID:', id, producto);
+
+ const { data, error } = await supabase
+   .from('productos')
+   .update({
+     ...producto,
+     updated_at: new Date().toISOString()
+   })
+   .eq('id', id)
+   .select()
+   .single();
+
+ if (error) {
+   console.error('❌ Error al actualizar producto:', error);
+   throw error;
+ }
+
+ console.log('✅ Producto actualizado:', data);
+ return data;
+};
+
+// Función para eliminar un producto
+export const deleteProducto = async (id: number): Promise<void> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('🗑️ Eliminando producto ID:', id);
+
+ const { error } = await supabase
+   .from('productos')
+   .delete()
+   .eq('id', id);
+
+ if (error) {
+   console.error('❌ Error al eliminar producto:', error);
+   throw error;
+ }
+
+ console.log('✅ Producto eliminado');
+};
+
+// Función para obtener descripciones propuestas (repetidas en facturas pero no mapeadas a productos)
+export const getDescripcionesPropuestas = async (minFrecuencia: number = 3): Promise<DescripcionPropuesta[]> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('🔍 Obteniendo descripciones propuestas con frecuencia mínima:', minFrecuencia);
+
+ // Obtener todas las descripciones de facturas que no están mapeadas a productos
+ const { data: facturasDetalle, error: facturasError } = await supabase
+   .from('reg_facturas_detalle')
+   .select('descripcion_item, cantidad, monto_item')
+   .not('descripcion_item', 'is', null);
+
+ if (facturasError) {
+   console.error('❌ Error al obtener detalles de facturas:', facturasError);
+   throw facturasError;
+ }
+
+ // Obtener todas las descripciones ya mapeadas
+ const { data: mapeos, error: mapeosError } = await supabase
+   .from('producto_descripcion_map')
+   .select('descripcion_original');
+
+ if (mapeosError) {
+   console.error('❌ Error al obtener mapeos:', mapeosError);
+   throw mapeosError;
+ }
+
+ const descripcionesMapeadas = new Set(mapeos?.map(m => m.descripcion_original.toLowerCase()) || []);
+
+ // Agrupar y contar frecuencias
+ const descripcionStats = new Map<string, { frecuencia: number; totalUnidades: number; totalIngresos: number }>();
+
+ facturasDetalle?.forEach(item => {
+   const descripcion = item.descripcion_item?.trim();
+   if (!descripcion || descripcionesMapeadas.has(descripcion.toLowerCase())) return;
+
+   const existing = descripcionStats.get(descripcion) || { frecuencia: 0, totalUnidades: 0, totalIngresos: 0 };
+   existing.frecuencia += 1;
+   existing.totalUnidades += item.cantidad || 0;
+   existing.totalIngresos += item.monto_item || 0;
+
+   descripcionStats.set(descripcion, existing);
+ });
+
+ // Filtrar por frecuencia mínima y convertir a array
+ const propuestas: DescripcionPropuesta[] = Array.from(descripcionStats.entries())
+   .filter(([, stats]) => stats.frecuencia >= minFrecuencia)
+   .map(([descripcion, stats]) => ({
+     descripcion,
+     frecuencia: stats.frecuencia,
+     total_unidades: stats.totalUnidades,
+     total_ingresos: stats.totalIngresos
+   }))
+   .sort((a, b) => b.frecuencia - a.frecuencia); // Ordenar por frecuencia descendente
+
+ console.log('✅ Descripciones propuestas encontradas:', propuestas.length);
+ return propuestas;
+};
+
+// Función para crear productos desde descripciones propuestas
+export const createProductosFromDescripciones = async (
+ descripciones: string[],
+ categoria?: string
+): Promise<Producto[]> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('🚀 Creando productos desde descripciones:', descripciones.length);
+
+ const productosCreados: Producto[] = [];
+
+ for (const descripcion of descripciones) {
+   try {
+     // Crear el producto
+     const producto = await createProducto({
+       nombre_producto: descripcion,
+       descripcion: `Producto creado desde descripción de factura: ${descripcion}`,
+       categoria: categoria || 'General',
+       activo: true
+     });
+
+     // Crear el mapeo
+     await supabase
+       .from('producto_descripcion_map')
+       .insert({
+         producto_id: producto.id,
+         descripcion_original: descripcion
+       });
+
+     productosCreados.push(producto);
+   } catch (error) {
+     console.error(`❌ Error al crear producto para descripción "${descripcion}":`, error);
+   }
+ }
+
+ console.log('✅ Productos creados desde descripciones:', productosCreados.length);
+ return productosCreados;
+};
+
+// Función para mapear una descripción existente a un producto
+export const mapDescripcionToProducto = async (
+ descripcion: string,
+ productoId: number
+): Promise<ProductoDescripcionMap> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('🔗 Mapeando descripción a producto:', descripcion, '->', productoId);
+
+ const { data, error } = await supabase
+   .from('producto_descripcion_map')
+   .insert({
+     producto_id: productoId,
+     descripcion_original: descripcion
+   })
+   .select()
+   .single();
+
+ if (error) {
+   console.error('❌ Error al crear mapeo:', error);
+   throw error;
+ }
+
+ console.log('✅ Mapeo creado:', data);
+ return data;
+};
+
+// Función mejorada para análisis de productos usando la tabla de productos
+export const getProductosAnalyticsMejorado = async (filters: {
+ dateFrom?: string;
+ dateTo?: string;
+ searchTerm?: string;
+ productoId?: number;
+} = {}): Promise<ProductoAnalytics[]> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('📊 [DB] Obteniendo análisis mejorado de productos con filtros:', filters);
+
+ // Obtener productos activos
+ const productos = await getProductos(true);
+
+ if (productos.length === 0) {
+   console.log('ℹ️ No hay productos activos para analizar');
+   return [];
+ }
+
+ // Obtener mapeos de productos
+ const { data: mapeos, error: mapeosError } = await supabase
+   .from('producto_descripcion_map')
+   .select('producto_id, descripcion_original');
+
+ if (mapeosError) {
+   console.error('❌ Error al obtener mapeos:', mapeosError);
+   throw mapeosError;
+ }
+
+ // Crear mapa de producto -> descripciones
+ const productoMapeos = new Map<number, string[]>();
+ mapeos?.forEach(mapeo => {
+   const existing = productoMapeos.get(mapeo.producto_id) || [];
+   existing.push(mapeo.descripcion_original);
+   productoMapeos.set(mapeo.producto_id, existing);
+ });
+
+ // Para cada producto, obtener sus estadísticas de ventas
+ const productosAnalytics: ProductoAnalytics[] = [];
+
+ for (const producto of productos) {
+   const descripciones = productoMapeos.get(producto.id) || [];
+
+   if (descripciones.length === 0) {
+     // Producto sin ventas
+     productosAnalytics.push({
+       descripcion_item: producto.nombre_producto,
+       total_unidades: 0,
+       total_ingresos: 0,
+       precio_promedio: 0,
+       precio_maximo: 0,
+       precio_minimo: 0,
+       numero_ventas: 0,
+       clientes_unicos: 0
+     });
+     continue;
+   }
+
+   // Buscar ventas para estas descripciones
+   let query = supabase
+     .from('reg_facturas_detalle')
+     .select(`
+       descripcion_item,
+       cantidad,
+       precio_unitario,
+       monto_item,
+       factura_id
+     `)
+     .in('descripcion_item', descripciones);
+
+   const { data: ventas, error: ventasError } = await query;
+
+   if (ventasError) {
+     console.error(`❌ Error al obtener ventas para producto ${producto.nombre_producto}:`, ventasError);
+     continue;
+   }
+
+   if (!ventas || ventas.length === 0) {
+     productosAnalytics.push({
+       descripcion_item: producto.nombre_producto,
+       total_unidades: 0,
+       total_ingresos: 0,
+       precio_promedio: 0,
+       precio_maximo: 0,
+       precio_minimo: 0,
+       numero_ventas: 0,
+       clientes_unicos: 0
+     });
+     continue;
+   }
+
+   // Calcular estadísticas
+   const totalUnidades = ventas.reduce((sum, v) => sum + (v.cantidad || 0), 0);
+   const totalIngresos = ventas.reduce((sum, v) => sum + (v.monto_item || 0), 0);
+   const precios = ventas.map(v => v.precio_unitario || 0).filter(p => p > 0);
+
+   productosAnalytics.push({
+     descripcion_item: producto.nombre_producto,
+     total_unidades: totalUnidades,
+     total_ingresos: totalIngresos,
+     precio_promedio: precios.length > 0 ? precios.reduce((sum, p) => sum + p, 0) / precios.length : 0,
+     precio_maximo: precios.length > 0 ? Math.max(...precios) : 0,
+     precio_minimo: precios.length > 0 ? Math.min(...precios) : 0,
+     numero_ventas: ventas.length,
+     clientes_unicos: 0 // Por ahora no calculamos clientes únicos, se puede implementar más tarde
+   });
+ }
+
+ // Filtrar por término de búsqueda si existe
+ let filteredData = productosAnalytics;
+ if (filters.searchTerm && filters.searchTerm.trim() !== '') {
+   const searchLower = filters.searchTerm.toLowerCase().trim();
+   filteredData = filteredData.filter(item =>
+     item.descripcion_item?.toLowerCase().includes(searchLower)
+   );
+ }
+
+ // Filtrar por producto específico si existe
+ if (filters.productoId) {
+   const producto = productos.find(p => p.id === filters.productoId);
+   if (producto) {
+     filteredData = filteredData.filter(item =>
+       item.descripcion_item === producto.nombre_producto
+     );
+   }
+ }
+
+ // Ordenar por ingresos totales
+ filteredData.sort((a, b) => b.total_ingresos - a.total_ingresos);
+
+ console.log('✅ [DB] Análisis mejorado de productos obtenido:', filteredData.length, 'productos');
+ return filteredData;
 };
 
