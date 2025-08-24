@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getVentasDetalle } from '../lib/database';
-import { RegFacturaDetalle } from '../types/database';
+import { getVentasDetalle, getFacturaPagos, getFacturaReferencias, markInvoiceAsFactored, unmarkInvoiceAsFactored } from '../lib/database';
+import { RegFacturaDetalle, RegFacturaPago, RegFacturaReferencia } from '../types/database';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -8,7 +8,12 @@ import {
   FileText,
   Package,
   DollarSign,
-  Hash
+  Hash,
+  CreditCard,
+  FileCheck,
+  Calendar,
+  CheckCircle,
+  XCircle
 } from 'lucide-react';
 
 interface VentasDetalleModalProps {
@@ -19,6 +24,9 @@ interface VentasDetalleModalProps {
   cliente: string;
   fecha: string;
   total: number;
+  isFactored?: boolean;
+  rutCliente?: string;
+  onFactoringUpdate?: () => void;
 }
 
 export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
@@ -28,9 +36,14 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
   facturaFolio,
   cliente,
   fecha,
-  total
+  total,
+  isFactored = false,
+  rutCliente = '',
+  onFactoringUpdate
 }) => {
   const [detalle, setDetalle] = useState<RegFacturaDetalle[]>([]);
+  const [pagos, setPagos] = useState<RegFacturaPago[]>([]);
+  const [referencias, setReferencias] = useState<RegFacturaReferencia[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -44,11 +57,23 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
 
     setLoading(true);
     try {
-      const data = await getVentasDetalle(facturaId);
-      setDetalle(data);
+      // Obtener detalle de la factura
+      const detalleData = await getVentasDetalle(facturaId);
+      setDetalle(detalleData);
+
+      // Obtener pagos de la factura
+      const pagosData = await getFacturaPagos(facturaId);
+      setPagos(pagosData);
+
+      // Obtener referencias de la factura
+      const referenciasData = await getFacturaReferencias(facturaId);
+      setReferencias(referenciasData);
+
     } catch (error) {
       console.error('Error al obtener detalle:', error);
       setDetalle([]);
+      setPagos([]);
+      setReferencias([]);
     } finally {
       setLoading(false);
     }
@@ -58,6 +83,31 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
     const totalNeto = detalle.reduce((sum, item) => sum + (item.monto_item || 0), 0);
     const totalCantidad = detalle.reduce((sum, item) => sum + (item.cantidad || 0), 0);
     return { totalNeto, totalCantidad };
+  };
+
+  const handleToggleFactoring = async () => {
+    if (!facturaId) return;
+
+    try {
+      const today = new Date().toISOString().split('T')[0];
+
+      if (isFactored) {
+        await unmarkInvoiceAsFactored(facturaId);
+      } else {
+        await markInvoiceAsFactored(facturaId, today);
+      }
+
+      // Actualizar el estado local
+      // Nota: En una implementación real, esto debería actualizar el estado en el componente padre
+      // Por ahora, solo llamamos al callback si existe
+      if (onFactoringUpdate) {
+        onFactoringUpdate();
+      }
+
+    } catch (error) {
+      console.error('Error al actualizar factoring:', error);
+      alert('Error al actualizar el estado de factoring');
+    }
   };
 
   if (!isOpen) return null;
@@ -90,13 +140,16 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
 
         {/* Invoice Summary */}
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <div className="bg-white rounded-xl p-4">
               <div className="flex items-center space-x-2">
                 <Hash className="h-4 w-4 text-slate-500" />
                 <span className="text-sm font-medium text-slate-600">Cliente</span>
               </div>
               <p className="text-lg font-semibold text-slate-900 mt-1">{cliente}</p>
+              {rutCliente && (
+                <p className="text-xs text-slate-500 mt-1">{rutCliente}</p>
+              )}
             </div>
             <div className="bg-white rounded-xl p-4">
               <div className="flex items-center space-x-2">
@@ -121,6 +174,35 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
               </div>
               <p className="text-lg font-semibold text-slate-900 mt-1">${total.toLocaleString()}</p>
             </div>
+            <div className="bg-white rounded-xl p-4">
+              <div className="flex items-center space-x-2">
+                <CreditCard className="h-4 w-4 text-slate-500" />
+                <span className="text-sm font-medium text-slate-600">Factoring</span>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <div className="flex items-center space-x-2">
+                  {isFactored ? (
+                    <CheckCircle className="h-5 w-5 text-green-600" />
+                  ) : (
+                    <XCircle className="h-5 w-5 text-red-600" />
+                  )}
+                  <span className={`text-sm font-medium ${isFactored ? 'text-green-600' : 'text-red-600'}`}>
+                    {isFactored ? 'Factorizada' : 'No Factorizada'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleToggleFactoring}
+                  className={`p-2 rounded-lg transition-colors ${
+                    isFactored
+                      ? 'text-red-600 hover:bg-red-100'
+                      : 'text-blue-600 hover:bg-blue-100'
+                  }`}
+                  title={isFactored ? 'Quitar factoring' : 'Marcar como factorizada'}
+                >
+                  <CreditCard className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -140,7 +222,7 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
               <p className="text-slate-400 text-sm">No se encontraron líneas de detalle para esta factura</p>
             </div>
           ) : (
-            <div className="p-6">
+            <div className="p-6 space-y-6">
               {/* Table */}
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="overflow-x-auto">
@@ -174,9 +256,7 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
                             {linea.numero_linea || index + 1}
                           </td>
                           <td className="px-4 py-4 text-sm text-slate-900">
-                            <div className="max-w-xs truncate" title={linea.descripcion_item || '-'}>
-                              {linea.descripcion_item || '-'}
-                            </div>
+                            <div className="max-w-xs truncate" title={linea.descripcion_item || '-'}>{linea.descripcion_item || '-'}</div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600">
                             {linea.cantidad?.toLocaleString() || '0'}
@@ -214,6 +294,145 @@ export const VentasDetalleModal: React.FC<VentasDetalleModalProps> = ({
                       </tr>
                     </tfoot>
                   </table>
+                </div>
+              </div>
+
+              {/* Pagos Section */}
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
+                  <div className="flex items-center space-x-2">
+                    <CreditCard className="h-5 w-5 text-blue-600" />
+                    <h3 className="text-lg font-semibold text-slate-900">Pagos Realizados</h3>
+                    <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                      {pagos.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="p-6">
+                  {pagos.length === 0 ? (
+                    <div className="text-center py-8">
+                      <CreditCard className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-500 font-medium">No hay pagos registrados</p>
+                      <p className="text-slate-400 text-sm mt-1">No se encontraron registros de pagos para esta factura</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {pagos.map((pago, index) => (
+                        <div key={pago.id} className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            <div className="flex items-center space-x-2">
+                              <Calendar className="h-4 w-4 text-slate-500" />
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {pago.fecha_pago ? format(new Date(pago.fecha_pago), 'dd/MM/yyyy', { locale: es }) : 'Fecha no especificada'}
+                                </p>
+                                <p className="text-xs text-slate-500">Fecha de pago</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <DollarSign className="h-4 w-4 text-green-600" />
+                              <div>
+                                <p className="text-sm font-medium text-green-600">
+                                  ${pago.monto_pago?.toLocaleString() || '0'}
+                                </p>
+                                <p className="text-xs text-slate-500">Monto pagado</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <FileText className="h-4 w-4 text-slate-500" />
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {pago.forma_pago || 'No especificada'}
+                                </p>
+                                <p className="text-xs text-slate-500">Forma de pago</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Hash className="h-4 w-4 text-slate-500" />
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {pago.numero_comprobante || 'No especificado'}
+                                </p>
+                                <p className="text-xs text-slate-500">Comprobante</p>
+                              </div>
+                            </div>
+                          </div>
+                          {pago.banco && (
+                            <div className="mt-3 pt-3 border-t border-slate-200">
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Banco:</span> {pago.banco}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Referencias Section */}
+              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
+                  <div className="flex items-center space-x-2">
+                    <FileCheck className="h-5 w-5 text-green-600" />
+                    <h3 className="text-lg font-semibold text-slate-900">Referencias</h3>
+                    <span className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
+                      {referencias.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="p-6">
+                  {referencias.length === 0 ? (
+                    <div className="text-center py-8">
+                      <FileCheck className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+                      <p className="text-slate-500 font-medium">No hay referencias</p>
+                      <p className="text-slate-400 text-sm mt-1">No se encontraron referencias para esta factura</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {referencias.map((referencia, index) => (
+                        <div key={referencia.id} className="bg-slate-50 rounded-lg p-4 border border-slate-200">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="flex items-center space-x-2">
+                              <FileText className="h-4 w-4 text-slate-500" />
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {referencia.tipo_referencia || 'Tipo no especificado'}
+                                </p>
+                                <p className="text-xs text-slate-500">Tipo de referencia</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Hash className="h-4 w-4 text-slate-500" />
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {referencia.folio_referencia || 'Folio no especificado'}
+                                </p>
+                                <p className="text-xs text-slate-500">Folio referencia</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Calendar className="h-4 w-4 text-slate-500" />
+                              <div>
+                                <p className="text-sm font-medium text-slate-900">
+                                  {referencia.fecha_referencia ? format(new Date(referencia.fecha_referencia), 'dd/MM/yyyy', { locale: es }) : 'Fecha no especificada'}
+                                </p>
+                                <p className="text-xs text-slate-500">Fecha referencia</p>
+                              </div>
+                            </div>
+                          </div>
+                          {referencia.descripcion_referencia && (
+                            <div className="mt-3 pt-3 border-t border-slate-200">
+                              <p className="text-xs text-slate-600">
+                                <span className="font-medium">Descripción:</span> {referencia.descripcion_referencia}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

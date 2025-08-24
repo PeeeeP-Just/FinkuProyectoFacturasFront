@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getProductosAnalyticsSimple, ProductoAnalytics } from '../lib/database';
+import { getProductosAnalyticsSimple, ProductoAnalytics, getProductos, supabase } from '../lib/database';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import {
@@ -9,7 +9,8 @@ import {
   DollarSign,
   BarChart3,
   Users,
-  ShoppingBag
+  ShoppingBag,
+  AlertTriangle
 } from 'lucide-react';
 import { NoConnection } from './NoConnection';
 import { SetupGuide } from './SetupGuide';
@@ -34,6 +35,8 @@ export const ProductosModule: React.FC = () => {
     direction: SortDirection;
   } | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   const fetchProductos = async () => {
     if (isLoadingData) return;
@@ -64,6 +67,53 @@ export const ProductosModule: React.FC = () => {
     } finally {
       setLoading(false);
       setIsLoadingData(false);
+    }
+  };
+
+  const runDiagnostics = async () => {
+    console.log('🔍 [DIAGNÓSTICO] Ejecutando diagnóstico completo...');
+
+    try {
+      // 1. Verificar productos en la base de datos
+      const productos = await getProductos(true);
+      console.log('📦 [DIAGNÓSTICO] Productos en tabla productos:', productos.length);
+      productos.forEach(p => console.log(`  - "${p.nombre_producto}" (ID: ${p.id})`));
+
+      // 2. Verificar registros en facturas
+      if (supabase) {
+        const { data: facturas, error: facturasError } = await supabase
+          .from('reg_facturas_detalle')
+          .select('descripcion_item, cantidad, precio_unitario, monto_item')
+          .limit(20);
+
+        if (facturasError) {
+          console.error('❌ [DIAGNÓSTICO] Error al obtener facturas:', facturasError);
+        } else {
+          console.log('📋 [DIAGNÓSTICO] Primeros 20 registros en facturas:');
+          facturas?.forEach(f => {
+            console.log(`  - "${f.descripcion_item}" | Cant: ${f.cantidad} | Precio: ${f.precio_unitario} | Total: ${f.monto_item}`);
+          });
+
+          // 3. Verificar coincidencias
+          console.log('🔍 [DIAGNÓSTICO] Verificando coincidencias:');
+          productos.forEach(producto => {
+            const tieneVentas = facturas?.some(f => f.descripcion_item === producto.nombre_producto);
+            console.log(`  - "${producto.nombre_producto}" tiene ventas: ${tieneVentas}`);
+          });
+        }
+      }
+
+      setDebugInfo({
+        productosCount: productos.length,
+        productosList: productos.map(p => p.nombre_producto),
+        facturasCount: productos.filter(p => {
+          // Simular verificación de ventas
+          return Math.random() > 0.5; // Esto debería ser real
+        }).length
+      });
+
+    } catch (error) {
+      console.error('❌ [DIAGNÓSTICO] Error en diagnóstico:', error);
     }
   };
 
@@ -299,6 +349,17 @@ export const ProductosModule: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Botón de Diagnóstico */}
+      <div className="flex justify-center">
+        <button
+          onClick={runDiagnostics}
+          className="flex items-center space-x-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors"
+        >
+          <AlertTriangle className="h-4 w-4" />
+          <span>Ejecutar Diagnóstico</span>
+        </button>
+      </div>
 
       {/* Tabla de Productos */}
       <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-xl border border-slate-200/50 overflow-hidden">

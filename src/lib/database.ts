@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { getDocumentMultiplier } from './documentTypes';
-import { ManualEntry, RegVenta, RegPago, RegFacturaDetalle, Producto, ProductoDescripcionMap, DescripcionPropuesta } from '../types/database';
+import { ManualEntry, RegVenta, RegPago, RegFacturaDetalle, Producto, ProductoDescripcionMap, DescripcionPropuesta, RegFacturaPago, RegFacturaReferencia } from '../types/database';
 
 // Cache connection status to avoid multiple tests
 let connectionStatus: boolean | null = null;
@@ -612,17 +612,39 @@ export const unmarkInvoiceAsFactored = async (id: number): Promise<RegVenta> => 
 };
 
 // Función para obtener el detalle de una factura de venta específica
-export const getVentasDetalle = async (facturaId: number): Promise<RegFacturaDetalle[]> => {
+export const getVentasDetalle = async (regVentasId: number): Promise<RegFacturaDetalle[]> => {
   if (!supabase) {
     throw new Error('Supabase no está configurado');
   }
 
-  console.log('📊 Obteniendo detalle de venta para factura ID:', facturaId);
+  console.log('📊 Obteniendo detalle de venta para reg_ventas ID:', regVentasId);
 
+  // Primero buscar el registro correspondiente en reg_facturas_xml
+  const { data: xmlData, error: xmlError } = await supabase
+    .from('reg_facturas_xml')
+    .select('id')
+    .eq('reg_ventas_id', regVentasId)
+    .limit(1);
+
+  if (xmlError) {
+    console.error('❌ Error al buscar registro XML para la venta:', xmlError);
+    // Si no encuentra el registro XML, devolver array vacío en lugar de error
+    console.log('⚠️ Error en consulta XML, devolviendo array vacío');
+    return [];
+  }
+
+  if (!xmlData || xmlData.length === 0 || !xmlData[0].id) {
+    console.log('⚠️ No se encontró registro XML para la venta ID:', regVentasId, ', devolviendo array vacío');
+    return [];
+  }
+
+  console.log('🔗 Encontrado reg_facturas_xml ID:', xmlData[0].id, 'para reg_ventas ID:', regVentasId);
+
+  // Ahora buscar los detalles usando el ID correcto
   const { data, error } = await supabase
     .from('reg_facturas_detalle')
     .select('*')
-    .eq('factura_id', facturaId)
+    .eq('factura_id', xmlData[0].id)
     .order('numero_linea', { ascending: true });
 
   if (error) {
@@ -939,6 +961,32 @@ function normalizarNombreProducto(descripcion: string): string {
   return nombreBase || descripcion.trim();
 }
 
+// Función para encontrar la mejor coincidencia entre un producto y descripciones de facturas
+function encontrarMejorCoincidencia(productoNombre: string, descripcionesFacturas: string[]): string[] {
+  const productoNormalizado = normalizarNombreProducto(productoNombre).toLowerCase();
+
+  // Primero intentar coincidencia exacta normalizada
+  const coincidenciasExactas = descripcionesFacturas.filter(desc => {
+    const descNormalizada = normalizarNombreProducto(desc).toLowerCase();
+    return descNormalizada === productoNormalizado;
+  });
+
+  if (coincidenciasExactas.length > 0) {
+    return coincidenciasExactas;
+  }
+
+  // Si no hay coincidencias exactas, buscar por palabras clave
+  const palabrasProducto = productoNormalizado.split(' ').filter(p => p.length > 2);
+  const coincidenciasParciales = descripcionesFacturas.filter(desc => {
+    const descNormalizada = normalizarNombreProducto(desc).toLowerCase();
+    return palabrasProducto.some(palabra =>
+      descNormalizada.includes(palabra)
+    );
+  });
+
+  return coincidenciasParciales;
+}
+
 // Función para obtener descripciones propuestas (repetidas en facturas pero no mapeadas a productos)
 export const getDescripcionesPropuestas = async (minFrecuencia: number = 3): Promise<DescripcionPropuesta[]> => {
   if (!supabase) {
@@ -1092,7 +1140,7 @@ export const mapDescripcionToProducto = async (
   return data;
 };
 
-// Función para obtener análisis simple de productos (sin mapeos)
+// Función para obtener análisis simple de productos con algoritmo inteligente
 export const getProductosAnalyticsSimple = async (filters: {
   dateFrom?: string;
   dateTo?: string;
@@ -1102,7 +1150,7 @@ export const getProductosAnalyticsSimple = async (filters: {
     throw new Error('Supabase no está configurado');
   }
 
-  console.log('📊 [DB] Obteniendo análisis simple de productos');
+  console.log('🧠 [DB] Obteniendo análisis simple de productos con algoritmo inteligente');
 
   // Obtener productos activos
   const productos = await getProductos(true);
@@ -1112,27 +1160,57 @@ export const getProductosAnalyticsSimple = async (filters: {
     return [];
   }
 
-  console.log('📦 Buscando ventas para productos:', productos.map(p => p.nombre_producto).join(', '));
+  // Obtener todas las descripciones de facturas para matching inteligente
+  let query = supabase
+    .from('reg_facturas_detalle')
+    .select(`
+      descripcion_item,
+      cantidad,
+      precio_unitario,
+      monto_item,
+      factura_id,
+      reg_facturas_xml!inner(
+        fecha_emision
+      )
+    `)
+    .not('descripcion_item', 'is', null)
+    .not('cantidad', 'is', null)
+    .not('precio_unitario', 'is', null);
+
+  // Aplicar filtros de fecha
+  if (filters.dateFrom && filters.dateFrom.trim() !== '') {
+    query = query.gte('reg_facturas_xml.fecha_emision', filters.dateFrom);
+  }
+  if (filters.dateTo && filters.dateTo.trim() !== '') {
+    query = query.lte('reg_facturas_xml.fecha_emision', filters.dateTo);
+  }
+
+  const { data: facturasDetalle, error: facturasError } = await query;
+
+  if (facturasError) {
+    console.error('❌ Error al obtener detalles de facturas:', facturasError);
+    throw facturasError;
+  }
+
+  console.log('📊 Detalles de facturas obtenidos:', facturasDetalle?.length || 0);
+
+  // Crear lista de descripciones únicas para matching
+  const descripcionesFacturas = [...new Set(facturasDetalle?.map(item => item.descripcion_item) || [])];
+  console.log('📋 Descripciones únicas encontradas:', descripcionesFacturas.length);
 
   const productosAnalytics: ProductoAnalytics[] = [];
 
   for (const producto of productos) {
-    console.log(`🔍 Buscando ventas para: "${producto.nombre_producto}"`);
+    console.log(`🔍 Procesando producto: "${producto.nombre_producto}"`);
 
-    // Buscar ventas usando el nombre del producto directamente
-    const { data: ventas, error: ventasError } = await supabase
-      .from('reg_facturas_detalle')
-      .select(`
-        descripcion_item,
-        cantidad,
-        precio_unitario,
-        monto_item,
-        factura_id
-      `)
-      .eq('descripcion_item', producto.nombre_producto);
+    // Usar algoritmo inteligente para encontrar coincidencias
+    const coincidencias = encontrarMejorCoincidencia(producto.nombre_producto, descripcionesFacturas);
 
-    if (ventasError) {
-      console.error(`❌ Error al buscar ventas para ${producto.nombre_producto}:`, ventasError);
+    console.log(`  📊 Coincidencias encontradas: ${coincidencias.length}`);
+    coincidencias.slice(0, 3).forEach(coinc => console.log(`    - "${coinc}"`));
+
+    if (coincidencias.length === 0) {
+      console.log(`  ⚠️ No se encontraron coincidencias para ${producto.nombre_producto}`);
       productosAnalytics.push({
         descripcion_item: producto.nombre_producto,
         total_unidades: 0,
@@ -1146,9 +1224,14 @@ export const getProductosAnalyticsSimple = async (filters: {
       continue;
     }
 
-    console.log(`  📊 Encontradas ${ventas?.length || 0} ventas para ${producto.nombre_producto}`);
+    // Filtrar las ventas que coinciden con las descripciones encontradas
+    const ventasRelacionadas = facturasDetalle?.filter(item =>
+      coincidencias.includes(item.descripcion_item)
+    ) || [];
 
-    if (!ventas || ventas.length === 0) {
+    console.log(`  📊 Ventas relacionadas encontradas: ${ventasRelacionadas.length}`);
+
+    if (ventasRelacionadas.length === 0) {
       productosAnalytics.push({
         descripcion_item: producto.nombre_producto,
         total_unidades: 0,
@@ -1162,12 +1245,19 @@ export const getProductosAnalyticsSimple = async (filters: {
       continue;
     }
 
-    // Calcular estadísticas
-    const totalUnidades = ventas.reduce((sum, v) => sum + (v.cantidad || 0), 0);
-    const totalIngresos = ventas.reduce((sum, v) => sum + (v.monto_item || 0), 0);
-    const precios = ventas.map(v => v.precio_unitario || 0).filter(p => p > 0);
+    // Calcular estadísticas combinadas
+    const totalUnidades = ventasRelacionadas.reduce((sum, v) => sum + (v.cantidad || 0), 0);
+    const totalIngresos = ventasRelacionadas.reduce((sum, v) => sum + (v.monto_item || 0), 0);
+    const precios = ventasRelacionadas.map(v => v.precio_unitario || 0).filter(p => p > 0);
 
-    console.log(`  ✅ ${producto.nombre_producto} - Unidades: ${totalUnidades}, Ingresos: ${totalIngresos}, Ventas: ${ventas.length}`);
+    console.log(`  ✅ ${producto.nombre_producto} - Unidades: ${totalUnidades}, Ingresos: ${totalIngresos}, Ventas: ${ventasRelacionadas.length}`);
+
+    // Mostrar ejemplos de agrupación si hay múltiples coincidencias
+    if (coincidencias.length > 1) {
+      console.log(`  🧠 Agrupación inteligente aplicada:`);
+      console.log(`    - Base: "${normalizarNombreProducto(producto.nombre_producto)}"`);
+      console.log(`    - Variaciones encontradas: ${coincidencias.join(', ')}`);
+    }
 
     productosAnalytics.push({
       descripcion_item: producto.nombre_producto,
@@ -1176,7 +1266,7 @@ export const getProductosAnalyticsSimple = async (filters: {
       precio_promedio: precios.length > 0 ? precios.reduce((sum, p) => sum + p, 0) / precios.length : 0,
       precio_maximo: precios.length > 0 ? Math.max(...precios) : 0,
       precio_minimo: precios.length > 0 ? Math.min(...precios) : 0,
-      numero_ventas: ventas.length,
+      numero_ventas: ventasRelacionadas.length,
       clientes_unicos: 0
     });
   }
@@ -1193,7 +1283,13 @@ export const getProductosAnalyticsSimple = async (filters: {
   // Ordenar por ingresos totales
   filteredData.sort((a, b) => b.total_ingresos - a.total_ingresos);
 
-  console.log('✅ [DB] Análisis simple de productos completado:', filteredData.length, 'productos');
+  console.log('✅ [DB] Análisis simple de productos con algoritmo inteligente completado:', filteredData.length, 'productos');
+
+  // Mostrar resumen de agrupaciones realizadas
+  const productosConVentas = filteredData.filter(p => p.numero_ventas > 0);
+  console.log('📈 Resumen de productos con ventas:', productosConVentas.length);
+  console.log('💰 Total ingresos combinados:', productosConVentas.reduce((sum, p) => sum + p.total_ingresos, 0).toLocaleString());
+
   return filteredData;
 };
 
@@ -1373,5 +1469,89 @@ export const getProductosAnalyticsMejorado = async (filters: {
 
  console.log('✅ [DB] Análisis mejorado de productos obtenido:', filteredData.length, 'productos');
  return filteredData;
+};
+
+// === PAGOS Y REFERENCIAS FUNCTIONS ===
+
+// Función para obtener pagos de una factura específica
+export const getFacturaPagos = async (regVentasId: number): Promise<RegFacturaPago[]> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('💰 Obteniendo pagos para reg_ventas ID:', regVentasId);
+
+ // Primero buscar el registro correspondiente en reg_facturas_xml
+ const { data: xmlData, error: xmlError } = await supabase
+   .from('reg_facturas_xml')
+   .select('id')
+   .eq('reg_ventas_id', regVentasId)
+   .limit(1);
+
+ if (xmlError) {
+   console.error('❌ Error al buscar registro XML para pagos:', xmlError);
+   return [];
+ }
+
+ if (!xmlData || xmlData.length === 0 || !xmlData[0].id) {
+   console.log('⚠️ No se encontró registro XML para pagos, devolviendo array vacío');
+   return [];
+ }
+
+ // Ahora buscar los pagos usando el ID de reg_facturas_xml
+ const { data, error } = await supabase
+   .from('reg_facturas_pagos')
+   .select('*')
+   .eq('factura_id', xmlData[0].id)
+   .order('fecha_pago', { ascending: true });
+
+ if (error) {
+   console.error('❌ Error al obtener pagos:', error);
+   return [];
+ }
+
+ console.log('✅ Pagos obtenidos:', data?.length || 0, 'registros');
+ return data || [];
+};
+
+// Función para obtener referencias de una factura específica
+export const getFacturaReferencias = async (regVentasId: number): Promise<RegFacturaReferencia[]> => {
+ if (!supabase) {
+   throw new Error('Supabase no está configurado');
+ }
+
+ console.log('📋 Obteniendo referencias para reg_ventas ID:', regVentasId);
+
+ // Primero buscar el registro correspondiente en reg_facturas_xml
+ const { data: xmlData, error: xmlError } = await supabase
+   .from('reg_facturas_xml')
+   .select('id')
+   .eq('reg_ventas_id', regVentasId)
+   .limit(1);
+
+ if (xmlError) {
+   console.error('❌ Error al buscar registro XML para referencias:', xmlError);
+   return [];
+ }
+
+ if (!xmlData || xmlData.length === 0 || !xmlData[0].id) {
+   console.log('⚠️ No se encontró registro XML para referencias, devolviendo array vacío');
+   return [];
+ }
+
+ // Ahora buscar las referencias usando el ID de reg_facturas_xml
+ const { data, error } = await supabase
+   .from('reg_facturas_referencias')
+   .select('*')
+   .eq('factura_id', xmlData[0].id)
+   .order('fecha_referencia', { ascending: true });
+
+ if (error) {
+   console.error('❌ Error al obtener referencias:', error);
+   return [];
+ }
+
+ console.log('✅ Referencias obtenidas:', data?.length || 0, 'registros');
+ return data || [];
 };
 

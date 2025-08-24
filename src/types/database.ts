@@ -190,8 +190,31 @@ export interface ProductoDescripcionMap {
 }
 
 export interface DescripcionPropuesta {
-   descripcion: string;
-   frecuencia: number;
-   total_unidades: number;
-   total_ingresos: number;
+    descripcion: string;
+    frecuencia: number;
+    total_unidades: number;
+    total_ingresos: number;
+}
+
+export interface RegFacturaPago {
+    id: number;
+    factura_id?: number;
+    fecha_pago: string;
+    monto_pago: number;
+    forma_pago?: string;
+    numero_comprobante?: string;
+    banco?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface RegFacturaReferencia {
+    id: number;
+    factura_id?: number;
+    tipo_referencia?: string;
+    folio_referencia?: string;
+    fecha_referencia?: string;
+    descripcion_referencia?: string;
+    created_at?: string;
+    updated_at?: string;
 }

@@ -55,6 +55,8 @@ export const VentasModule: React.FC = () => {
     cliente: string;
     fecha: string;
     total: number;
+    isFactored: boolean;
+    rutCliente: string;
   } | null>(null);
 
   const fetchVentas = async () => {
@@ -238,7 +240,9 @@ export const VentasModule: React.FC = () => {
       folio: invoice.folio || invoice.nro?.toString() || '',
       cliente: invoice.razon_social || '-',
       fecha: invoice.fecha_docto || '',
-      total: invoice.monto_total || 0
+      total: invoice.monto_total || 0,
+      isFactored: invoice.is_factored || false,
+      rutCliente: invoice.rut_cliente || ''
     });
     setShowDetalleModal(true);
   };
@@ -469,7 +473,11 @@ export const VentasModule: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={selectedInvoices.size === ventas.length && ventas.length > 0}
-                    onChange={(e) => handleSelectAll(e.target.checked)}
+                    onChange={(e) => {
+                      e.stopPropagation(); // Prevenir que el click abra el modal
+                      handleSelectAll(e.target.checked);
+                    }}
+                    onClick={(e) => e.stopPropagation()} // Prevenir propagación adicional
                     className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   />
                 </th>
@@ -579,7 +587,11 @@ export const VentasModule: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={selectedInvoices.has(originalInvoice.id)}
-                            onChange={(e) => handleSelectInvoice(originalInvoice.id, e.target.checked)}
+                            onChange={(e) => {
+                              e.stopPropagation(); // Prevenir que el click abra el modal
+                              handleSelectInvoice(originalInvoice.id, e.target.checked);
+                            }}
+                            onClick={(e) => e.stopPropagation()} // Prevenir propagación adicional
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                           />
                         </td>
@@ -799,6 +811,9 @@ export const VentasModule: React.FC = () => {
           cliente={selectedDetalleFactura.cliente}
           fecha={selectedDetalleFactura.fecha}
           total={selectedDetalleFactura.total}
+          isFactored={selectedDetalleFactura.isFactored}
+          rutCliente={selectedDetalleFactura.rutCliente}
+          onFactoringUpdate={fetchVentas}
         />
       )}
     </div>

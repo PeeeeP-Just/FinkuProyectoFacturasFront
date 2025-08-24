@@ -247,31 +247,40 @@ export const FlujoCajaModule: React.FC = () => {
       for (const group of documentGroups) {
         const originalInvoice = group.original;
 
-        // NEW: Check if invoice has credit notes and get emission date from reg_facturas_xml
+        // CORRECCIÓN: Lógica de prioridad de fechas según especificaciones
+        // 1. Si tiene nota de crédito → prevalece la fecha de emisión de la nota de crédito
+        // 2. Si está factorizada → usar fecha de factorización
+        // 3. Si no, usar fecha de pago o fecha de documento
+
         let fechaPago = '';
+        let fechaRazon = '';
+
         if (group.creditNotes.length > 0) {
-          // If invoice has credit notes, use emission date from reg_facturas_xml
+          // PRIORIDAD 1: Nota de crédito prevalece
           const emissionDate = getEmissionDateForInvoiceWithCreditNote(originalInvoice.id, facturasXml);
           if (emissionDate) {
             fechaPago = emissionDate;
+            fechaRazon = 'Nota de Crédito';
             console.log(`🔍 Venta ID ${originalInvoice.id} - Tiene nota de crédito, usando fecha de emisión:`, fechaPago);
           }
         }
 
-        // If no emission date from XML (or no credit notes), use normal payment date logic
         if (!fechaPago) {
-          const paymentDate = getPaymentDate(originalInvoice.id, 'venta', facturasXml, pagos);
-          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha pago encontrada:`, paymentDate);
-          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha factoring:`, originalInvoice.factoring_date);
-          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha documento:`, originalInvoice.fecha_docto);
-
-          fechaPago = paymentDate ||
-            (originalInvoice.is_factored && originalInvoice.factoring_date
-              ? originalInvoice.factoring_date
-              : originalInvoice.fecha_docto || '');
-
-          console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha final seleccionada (sin nota de crédito):`, fechaPago);
+          // PRIORIDAD 2: Si está factorizada, usar fecha de factorización
+          if (originalInvoice.is_factored && originalInvoice.factoring_date) {
+            fechaPago = originalInvoice.factoring_date;
+            fechaRazon = 'Factorizada';
+            console.log(`🔍 Venta ID ${originalInvoice.id} - Está factorizada, usando fecha de factorización:`, fechaPago);
+          } else {
+            // PRIORIDAD 3: Usar fecha de pago o fecha de documento
+            const paymentDate = getPaymentDate(originalInvoice.id, 'venta', facturasXml, pagos);
+            fechaPago = paymentDate || originalInvoice.fecha_docto || '';
+            fechaRazon = paymentDate ? 'Pago' : 'Documento';
+            console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha ${fechaRazon}:`, fechaPago);
+          }
         }
+
+        console.log(`🔍 Venta ID ${originalInvoice.id} - Fecha final seleccionada (${fechaRazon}):`, fechaPago);
 
         // Check if invoice is fully paid
         const isFullyPaid = isInvoiceFullyPaid(originalInvoice.id, 'venta', originalInvoice.monto_total || 0, facturasXml, pagos);
