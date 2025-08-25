@@ -5,7 +5,8 @@ import {
   updateProducto,
   deleteProducto,
   getDescripcionesPropuestas,
-  createProductosFromDescripciones
+  createProductosFromDescripciones,
+  getDataIntegrityDiagnostic
 } from '../lib/database';
 import { Producto, DescripcionPropuesta } from '../types/database';
 import { format } from 'date-fns';
@@ -41,6 +42,10 @@ export const GestionProductosModule: React.FC = () => {
   const [descripcionesPropuestas, setDescripcionesPropuestas] = useState<DescripcionPropuesta[]>([]);
   const [selectedPropuestas, setSelectedPropuestas] = useState<Set<string>>(new Set());
   const [loadingPropuestas, setLoadingPropuestas] = useState(false);
+  const [propuestasFilter, setPropuestasFilter] = useState<'ventas' | 'compras' | 'todos'>('todos');
+  const [editablePropuestas, setEditablePropuestas] = useState<Map<string, string>>(new Map());
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -136,11 +141,15 @@ export const GestionProductosModule: React.FC = () => {
     setShowEditModal(true);
   };
 
-  const fetchDescripcionesPropuestas = async () => {
+  const fetchDescripcionesPropuestas = async (resetEdits: boolean = true) => {
     setLoadingPropuestas(true);
     try {
-      const propuestas = await getDescripcionesPropuestas(2); // Mínimo 2 repeticiones
+      const propuestas = await getDescripcionesPropuestas(2, propuestasFilter); // Mínimo 2 repeticiones
       setDescripcionesPropuestas(propuestas);
+      // Only reset editable names if explicitly requested (not when changing filters)
+      if (resetEdits) {
+        setEditablePropuestas(new Map());
+      }
     } catch (error) {
       console.error('Error al obtener descripciones propuestas:', error);
       alert('Error al obtener descripciones propuestas');
@@ -153,10 +162,16 @@ export const GestionProductosModule: React.FC = () => {
     if (selectedPropuestas.size === 0) return;
 
     try {
-      await createProductosFromDescripciones(Array.from(selectedPropuestas));
+      // Use edited names if available, otherwise use original names
+      const nombresFinales = Array.from(selectedPropuestas).map(originalName => {
+        return editablePropuestas.get(originalName) || originalName;
+      });
+
+      await createProductosFromDescripciones(nombresFinales, 'General', true);
       setShowPropuestasModal(false);
       setSelectedPropuestas(new Set());
       setDescripcionesPropuestas([]);
+      setEditablePropuestas(new Map());
       await fetchProductos();
     } catch (error) {
       console.error('Error al crear productos desde propuestas:', error);
@@ -211,7 +226,9 @@ export const GestionProductosModule: React.FC = () => {
         <div className="flex space-x-3">
           <button
             onClick={() => {
-              fetchDescripcionesPropuestas();
+              if (descripcionesPropuestas.length === 0) {
+                fetchDescripcionesPropuestas(true);
+              }
               setShowPropuestasModal(true);
             }}
             className="flex items-center space-x-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors"
@@ -600,69 +617,135 @@ export const GestionProductosModule: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
             <div className="p-6 border-b border-slate-200">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
-                  <Lightbulb className="h-5 w-5 text-amber-600" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                    <Lightbulb className="h-5 w-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Propuestas de Productos</h3>
+                    <p className="text-sm text-slate-600">Descripciones que se repiten y pueden convertirse en productos</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Propuestas de Productos</h3>
-                  <p className="text-sm text-slate-600">Descripciones que se repiten y pueden convertirse en productos</p>
-                </div>
+                <select
+                  value={propuestasFilter}
+                  onChange={(e) => {
+                    const newFilter = e.target.value as 'ventas' | 'compras' | 'todos';
+                    setPropuestasFilter(newFilter);
+                    setSelectedPropuestas(new Set());
+                    // Auto-refresh proposals when filter changes (don't reset edits)
+                    fetchDescripcionesPropuestas(false);
+                  }}
+                  className="px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm"
+                >
+                  <option value="todos">Todos</option>
+                  <option value="ventas">Solo Ventas</option>
+                  <option value="compras">Solo Compras</option>
+                </select>
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto">
-              {loadingPropuestas ? (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <div className="w-8 h-8 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mb-4"></div>
-                  <p className="text-slate-500 font-medium">Buscando propuestas...</p>
-                </div>
-              ) : descripcionesPropuestas.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mb-4">
-                    <Lightbulb className="h-8 w-8 text-slate-400" />
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto max-h-96">
+                {loadingPropuestas ? (
+                  <div className="flex flex-col items-center justify-center py-16">
+                    <div className="w-8 h-8 border-4 border-amber-200 border-t-amber-600 rounded-full animate-spin mb-4"></div>
+                    <p className="text-slate-500 font-medium">Buscando propuestas...</p>
                   </div>
-                  <p className="text-slate-500 font-medium text-lg mb-2">No hay propuestas disponibles</p>
-                  <p className="text-slate-400 text-sm">No se encontraron descripciones que se repitan más de 2 veces</p>
-                </div>
-              ) : (
-                <div className="p-6">
-                  <div className="space-y-4">
-                    {descripcionesPropuestas.map((propuesta, index) => (
-                      <div key={index} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-3">
-                              <input
-                                type="checkbox"
-                                checked={selectedPropuestas.has(propuesta.descripcion)}
-                                onChange={(e) => {
-                                  const newSelected = new Set(selectedPropuestas);
-                                  if (e.target.checked) {
-                                    newSelected.add(propuesta.descripcion);
-                                  } else {
-                                    newSelected.delete(propuesta.descripcion);
-                                  }
-                                  setSelectedPropuestas(newSelected);
-                                }}
-                                className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
-                              />
-                              <div>
-                                <p className="font-medium text-slate-900">{propuesta.descripcion}</p>
-                                <div className="flex items-center space-x-4 mt-1">
-                                  <span className="text-sm text-blue-600">Frecuencia: {propuesta.frecuencia}</span>
-                                  <span className="text-sm text-green-600">Unidades: {propuesta.total_unidades.toLocaleString()}</span>
-                                  <span className="text-sm text-purple-600">Ingresos: ${propuesta.total_ingresos.toLocaleString()}</span>
+                ) : descripcionesPropuestas.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16">
+                    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mb-4">
+                      <Lightbulb className="h-8 w-8 text-slate-400" />
+                    </div>
+                    <p className="text-slate-500 font-medium text-lg mb-2">No hay propuestas disponibles</p>
+                    <p className="text-slate-400 text-sm">No se encontraron descripciones que se repitan más de 2 veces</p>
+                  </div>
+                ) : (
+                  <div className="p-6">
+                    <div className="space-y-4">
+                      {descripcionesPropuestas.map((propuesta, index) => {
+                        const isEditing = editablePropuestas.has(propuesta.descripcion);
+                        const editedName = editablePropuestas.get(propuesta.descripcion) || propuesta.descripcion;
+
+                        return (
+                          <div key={index} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedPropuestas.has(propuesta.descripcion)}
+                                    onChange={(e) => {
+                                      const newSelected = new Set(selectedPropuestas);
+                                      if (e.target.checked) {
+                                        newSelected.add(propuesta.descripcion);
+                                      } else {
+                                        newSelected.delete(propuesta.descripcion);
+                                      }
+                                      setSelectedPropuestas(newSelected);
+                                    }}
+                                    className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                  />
+                                  <div className="flex-1">
+                                    {isEditing ? (
+                                      <div className="space-y-2">
+                                        <input
+                                          type="text"
+                                          value={editedName}
+                                          onChange={(e) => {
+                                            const newEditable = new Map(editablePropuestas);
+                                            newEditable.set(propuesta.descripcion, e.target.value);
+                                            setEditablePropuestas(newEditable);
+                                          }}
+                                          className="w-full px-3 py-1 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 text-sm"
+                                          placeholder="Nombre del producto..."
+                                        />
+                                        <div className="flex space-x-2">
+                                          <button
+                                            onClick={() => {
+                                              const newEditable = new Map(editablePropuestas);
+                                              newEditable.delete(propuesta.descripcion);
+                                              setEditablePropuestas(newEditable);
+                                            }}
+                                            className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-medium rounded text-xs transition-colors"
+                                          >
+                                            Cancelar
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div>
+                                        <p className="font-medium text-slate-900">{propuesta.descripcion}</p>
+                                        <div className="flex items-center space-x-4 mt-1">
+                                          <span className="text-sm text-blue-600">Frecuencia: {propuesta.frecuencia}</span>
+                                          <span className="text-sm text-green-600">Unidades: {propuesta.total_unidades.toLocaleString()}</span>
+                                          <span className="text-sm text-purple-600">Ingresos: ${propuesta.total_ingresos.toLocaleString()}</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
+                              {!isEditing && (
+                                <button
+                                  onClick={() => {
+                                    const newEditable = new Map(editablePropuestas);
+                                    newEditable.set(propuesta.descripcion, propuesta.descripcion);
+                                    setEditablePropuestas(newEditable);
+                                  }}
+                                  className="ml-3 px-3 py-1 bg-amber-100 hover:bg-amber-200 text-amber-700 font-medium rounded-lg text-sm transition-colors"
+                                >
+                                  Editar
+                                </button>
+                              )}
                             </div>
                           </div>
-                        </div>
-                      </div>
-                    ))}
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="p-6 border-t border-slate-200 flex space-x-3">
@@ -671,6 +754,7 @@ export const GestionProductosModule: React.FC = () => {
                   setShowPropuestasModal(false);
                   setSelectedPropuestas(new Set());
                   setDescripcionesPropuestas([]);
+                  setEditablePropuestas(new Map());
                 }}
                 className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition-all duration-200"
               >
@@ -686,6 +770,7 @@ export const GestionProductosModule: React.FC = () => {
                 }`}
               >
                 Crear {selectedPropuestas.size} Producto(s)
+                {editablePropuestas.size > 0 && ` (con nombres editados)`}
               </button>
             </div>
           </div>

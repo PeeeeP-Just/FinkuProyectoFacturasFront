@@ -20,6 +20,7 @@ import { MonthSelector, getMonthDateRange } from './MonthSelector';
 import { getDocumentTypeName, getDocumentTypeColor, getDocumentMultiplier } from '../lib/documentTypes';
 import { CompactFilterBar } from './CompactFilterBar';
 import { SortableHeader, SortDirection } from './SortableHeader';
+import { ComprasDetalleModal } from './ComprasDetalleModal';
 
 export const ComprasModule: React.FC = () => {
   const [compras, setCompras] = useState<RegCompra[]>([]);
@@ -39,6 +40,15 @@ export const ComprasModule: React.FC = () => {
   const [sortConfig, setSortConfig] = useState<{
     field: string;
     direction: SortDirection;
+  } | null>(null);
+  const [showDetalleModal, setShowDetalleModal] = useState(false);
+  const [selectedDetalleCompra, setSelectedDetalleCompra] = useState<{
+    id: number;
+    folio: string;
+    proveedor: string;
+    fecha: string;
+    total: number;
+    rutProveedor: string;
   } | null>(null);
 
   const fetchCompras = async () => {
@@ -212,6 +222,23 @@ export const ComprasModule: React.FC = () => {
     }
 
     setSortConfig(direction ? { field, direction } : null);
+  };
+
+  const handleShowDetalle = (compra: RegCompra) => {
+    setSelectedDetalleCompra({
+      id: compra.id,
+      folio: compra.folio || compra.nro?.toString() || '',
+      proveedor: compra.razon_social || '-',
+      fecha: compra.fecha_docto || '',
+      total: compra.monto_total || 0,
+      rutProveedor: compra.rut_proveedor || ''
+    });
+    setShowDetalleModal(true);
+  };
+
+  const closeDetalleModal = () => {
+    setShowDetalleModal(false);
+    setSelectedDetalleCompra(null);
   };
 
   // Si no hay conexión, mostrar componente de configuración
@@ -420,7 +447,7 @@ export const ComprasModule: React.FC = () => {
                   const isCredit = multiplier === -1;
 
                   return (
-                    <tr key={compra.id} className={`hover:bg-orange-50/30 transition-all duration-200 ${isCredit ? 'bg-green-50/20' : ''}`}>
+                    <tr key={compra.id} className={`hover:bg-orange-50/30 transition-all duration-200 cursor-pointer ${isCredit ? 'bg-green-50/20' : ''}`} onClick={() => handleShowDetalle(compra)} title="Click para ver detalle">
                       <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 font-medium text-slate-900 truncate max-w-20 sm:max-w-24 lg:max-w-full" title={compra.folio || '-'}>
                         {compra.folio || '-'}
                       </td>
@@ -461,6 +488,20 @@ export const ComprasModule: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {/* Compras Detalle Modal */}
+      {showDetalleModal && selectedDetalleCompra && (
+        <ComprasDetalleModal
+          isOpen={showDetalleModal}
+          onClose={closeDetalleModal}
+          compraId={selectedDetalleCompra.id}
+          compraFolio={selectedDetalleCompra.folio}
+          proveedor={selectedDetalleCompra.proveedor}
+          fecha={selectedDetalleCompra.fecha}
+          total={selectedDetalleCompra.total}
+          rutProveedor={selectedDetalleCompra.rutProveedor}
+        />
+      )}
     </div>
   );
 };

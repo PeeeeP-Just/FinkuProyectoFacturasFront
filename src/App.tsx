@@ -6,6 +6,7 @@ import { FlujoCajaModule } from './components/FlujoCajaModule';
 import { ManualEntriesModule } from './components/ManualEntriesModule';
 import { ProductosModule } from './components/ProductosModule';
 import { GestionProductosModule } from './components/GestionProductosModule';
+import { DataStatusModule } from './components/DataStatusModule';
 import { EnvStatus } from './components/EnvStatus';
 import { EnvFileChecker } from './components/EnvFileChecker';
 
@@ -67,6 +68,8 @@ const AppContent: React.FC<AppContentProps> = ({ activeModule }) => {
       return <FlujoCajaModule />;
     case 'manual-entries':
       return <ManualEntriesModule />;
+    case 'data-status':
+      return <DataStatusModule />;
     default:
       return <VentasModule />;
   }

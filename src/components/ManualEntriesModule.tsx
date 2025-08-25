@@ -216,51 +216,146 @@ export const ManualEntriesModule: React.FC = () => {
         <p className="text-slate-600 mb-6">
           Gestiona gastos e ingresos que no provienen de facturas electrónicas
         </p>
+      </div>
 
-        {/* Search and Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-              Buscar
-            </label>
-            <div className="relative">
-              <Search className="h-5 w-5 absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Descripción..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 placeholder-slate-400"
-              />
+      {/* Compact Filters */}
+      <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-6">
+        {!showForm ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2 tracking-tight">
+                Buscar Descripción
+              </label>
+              <div className="relative">
+                <Search className="h-4 w-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Descripción..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50/50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 placeholder-slate-400 text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2 tracking-tight">
+                Tipo
+              </label>
+              <select
+                value={selectedEntryType}
+                onChange={(e) => setSelectedEntryType(e.target.value as 'expense' | 'income' | '')}
+                className="w-full px-4 py-2.5 bg-slate-50/50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 text-sm"
+              >
+                <option value="">Todos los tipos</option>
+                <option value="expense">Gastos</option>
+                <option value="income">Ingresos</option>
+              </select>
+            </div>
+
+            {/* Add New Entry Button */}
+            <div className="flex items-end">
+              <button
+                onClick={() => setShowForm(true)}
+                className="inline-flex items-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 text-sm"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Nueva Entrada
+              </button>
             </div>
           </div>
-
+        ) : (
+          /* New/Edit Entry Form */
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-              Tipo
-            </label>
-            <select
-              value={selectedEntryType}
-              onChange={(e) => setSelectedEntryType(e.target.value as 'expense' | 'income' | '')}
-              className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900"
-            >
-              <option value="">Todos los tipos</option>
-              <option value="expense">Gastos</option>
-              <option value="income">Ingresos</option>
-            </select>
-          </div>
-        </div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
+                  {editingEntry ? <Edit className="h-4 w-4 text-slate-600" /> : <Plus className="h-4 w-4 text-slate-600" />}
+                </div>
+                <h3 className="text-lg font-semibold text-slate-900 tracking-tight">
+                  {editingEntry ? 'Editar Entrada' : 'Nueva Entrada'}
+                </h3>
+              </div>
+              <button
+                onClick={cancelEdit}
+                className="inline-flex items-center px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition-all duration-200 focus:ring-2 focus:ring-slate-500 focus:ring-offset-2 text-sm"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Cancelar
+              </button>
+            </div>
 
-        {/* Add New Entry Button */}
-        <div className="flex justify-end">
-          <button
-            onClick={() => setShowForm(true)}
-            className="inline-flex items-center px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            <Plus className="h-5 w-5 mr-2" />
-            Nueva Entrada
-          </button>
-        </div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2 tracking-tight">
+                    Tipo *
+                  </label>
+                  <select
+                    value={formData.entry_type}
+                    onChange={(e) => setFormData({...formData, entry_type: e.target.value as 'expense' | 'income'})}
+                    className="w-full px-4 py-2.5 bg-slate-50/50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 text-sm"
+                    required
+                  >
+                    <option value="expense">Gasto</option>
+                    <option value="income">Ingreso</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2 tracking-tight">
+                    Fecha *
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.entry_date}
+                    onChange={(e) => setFormData({...formData, entry_date: e.target.value})}
+                    className="w-full px-4 py-2.5 bg-slate-50/50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 text-sm"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2 tracking-tight">
+                    Monto *
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                    placeholder="0"
+                    className="w-full px-4 py-2.5 bg-slate-50/50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 placeholder-slate-400 text-sm"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2 tracking-tight">
+                  Descripción *
+                </label>
+                <input
+                  type="text"
+                  value={formData.description}
+                  onChange={(e) => setFormData({...formData, description: e.target.value})}
+                  placeholder="Ej: Pago de crédito, Sueldo empleado, Venta producto sin factura..."
+                  className="w-full px-4 py-2.5 bg-slate-50/50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 placeholder-slate-400 text-sm"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  type="submit"
+                  className="inline-flex items-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 text-sm"
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  {editingEntry ? 'Actualizar' : 'Guardar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </div>
 
       {/* Month Selector */}
@@ -313,97 +408,6 @@ export const ManualEntriesModule: React.FC = () => {
         </div>
       </div>
 
-      {/* New/Edit Entry Form */}
-      {showForm && (
-        <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-slate-200/50 p-8">
-          <div className="flex items-center space-x-3 mb-6">
-            <div className="w-8 h-8 bg-gradient-to-br from-slate-100 to-slate-200 rounded-xl flex items-center justify-center">
-              {editingEntry ? <Edit className="h-4 w-4 text-slate-600" /> : <Plus className="h-4 w-4 text-slate-600" />}
-            </div>
-            <h3 className="text-xl font-semibold text-slate-900 tracking-tight">
-              {editingEntry ? 'Editar Entrada' : 'Nueva Entrada'}
-            </h3>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-                  Tipo *
-                </label>
-                <select
-                  value={formData.entry_type}
-                  onChange={(e) => setFormData({...formData, entry_type: e.target.value as 'expense' | 'income'})}
-                  className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900"
-                  required
-                >
-                  <option value="expense">Gasto</option>
-                  <option value="income">Ingreso</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-                  Fecha *
-                </label>
-                <input
-                  type="date"
-                  value={formData.entry_date}
-                  onChange={(e) => setFormData({...formData, entry_date: e.target.value})}
-                  className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-                Descripción *
-              </label>
-              <input
-                type="text"
-                value={formData.description}
-                onChange={(e) => setFormData({...formData, description: e.target.value})}
-                placeholder="Ej: Pago de crédito, Sueldo empleado, Venta producto sin factura..."
-                className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 placeholder-slate-400"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-3 tracking-tight">
-                Monto *
-              </label>
-              <input
-                type="text"
-                value={formData.amount}
-                onChange={(e) => setFormData({...formData, amount: e.target.value})}
-                placeholder="0"
-                className="w-full px-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition-all duration-200 text-slate-900 placeholder-slate-400"
-                required
-              />
-            </div>
-
-            <div className="flex space-x-4">
-              <button
-                type="submit"
-                className="inline-flex items-center px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-all duration-200 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                <Save className="h-5 w-5 mr-2" />
-                {editingEntry ? 'Actualizar' : 'Guardar'}
-              </button>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                className="inline-flex items-center px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition-all duration-200 focus:ring-2 focus:ring-slate-500 focus:ring-offset-2"
-              >
-                <X className="h-5 w-5 mr-2" />
-                Cancelar
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
 
       {/* Entries Table */}
       <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-xl border border-slate-200/50 overflow-hidden">

@@ -10,7 +10,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Package,
-  Settings
+  Settings,
+  Database
 } from 'lucide-react';
 import { ConnectionStatus } from './ConnectionStatus';
 
@@ -30,6 +31,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
     { id: 'gestion-productos', name: 'Gestión Productos', icon: Settings },
     { id: 'flujo-caja', name: 'Flujo de Caja', icon: TrendingUp },
     { id: 'manual-entries', name: 'Entradas Manuales', icon: DollarSign },
+    { id: 'data-status', name: 'Estado de Datos', icon: Database },
   ];
 
   return (

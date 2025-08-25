@@ -656,6 +656,51 @@ export const getVentasDetalle = async (regVentasId: number): Promise<RegFacturaD
   return data || [];
 };
 
+// Función para obtener el detalle de una factura de compra específica
+export const getComprasDetalle = async (regComprasId: number): Promise<RegFacturaDetalle[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 Obteniendo detalle de compra para reg_compras ID:', regComprasId);
+
+  // Primero buscar el registro correspondiente en reg_facturas_xml
+  const { data: xmlData, error: xmlError } = await supabase
+    .from('reg_facturas_xml')
+    .select('id')
+    .eq('reg_compras_id', regComprasId)
+    .limit(1);
+
+  if (xmlError) {
+    console.error('❌ Error al buscar registro XML para la compra:', xmlError);
+    // Si no encuentra el registro XML, devolver array vacío en lugar de error
+    console.log('⚠️ Error en consulta XML, devolviendo array vacío');
+    return [];
+  }
+
+  if (!xmlData || xmlData.length === 0 || !xmlData[0].id) {
+    console.log('⚠️ No se encontró registro XML para la compra ID:', regComprasId, ', devolviendo array vacío');
+    return [];
+  }
+
+  console.log('🔗 Encontrado reg_facturas_xml ID:', xmlData[0].id, 'para reg_compras ID:', regComprasId);
+
+  // Ahora buscar los detalles usando el ID correcto
+  const { data, error } = await supabase
+    .from('reg_facturas_detalle')
+    .select('*')
+    .eq('factura_id', xmlData[0].id)
+    .order('numero_linea', { ascending: true });
+
+  if (error) {
+    console.error('❌ Error al obtener detalle de compra:', error);
+    throw error;
+  }
+
+  console.log('✅ Detalle de compra obtenido:', data?.length || 0, 'líneas');
+  return data || [];
+};
+
 // Interface para análisis de productos
 export interface ProductoAnalytics {
   descripcion_item: string;
@@ -987,24 +1032,105 @@ function encontrarMejorCoincidencia(productoNombre: string, descripcionesFactura
   return coincidenciasParciales;
 }
 
-// Función para obtener descripciones propuestas (repetidas en facturas pero no mapeadas a productos)
-export const getDescripcionesPropuestas = async (minFrecuencia: number = 3): Promise<DescripcionPropuesta[]> => {
+// Función de diagnóstico para verificar la integridad de datos
+export const getDataIntegrityDiagnostic = async () => {
   if (!supabase) {
     throw new Error('Supabase no está configurado');
   }
 
-  console.log('🔍 Obteniendo descripciones propuestas con frecuencia mínima:', minFrecuencia);
+  console.log('🔍 Ejecutando diagnóstico de integridad de datos...');
+
+  // Verificar reg_facturas_xml
+  const { data: xmlData, error: xmlError } = await supabase
+    .from('reg_facturas_xml')
+    .select('id, reg_ventas_id, reg_compras_id, tipo_dte');
+
+  if (xmlError) {
+    console.error('❌ Error al obtener datos XML:', xmlError);
+    throw xmlError;
+  }
+
+  const xmlStats = {
+    total: xmlData?.length || 0,
+    withVentasId: xmlData?.filter(x => x.reg_ventas_id !== null).length || 0,
+    withComprasId: xmlData?.filter(x => x.reg_compras_id !== null).length || 0,
+    withBothIds: xmlData?.filter(x => x.reg_ventas_id !== null && x.reg_compras_id !== null).length || 0,
+    withNeitherId: xmlData?.filter(x => x.reg_ventas_id === null && x.reg_compras_id === null).length || 0,
+    documentosPorTipo: {} as Record<string, number>
+  };
+
+  // Contar por tipo de documento
+  xmlData?.forEach(item => {
+    const tipo = item.tipo_dte || 'Sin tipo';
+    xmlStats.documentosPorTipo[tipo] = (xmlStats.documentosPorTipo[tipo] || 0) + 1;
+  });
+
+  console.log('📊 Estadísticas XML:', xmlStats);
+
+  return xmlStats;
+};
+
+// Función para obtener descripciones propuestas (repetidas en facturas pero no mapeadas a productos)
+export const getDescripcionesPropuestas = async (
+  minFrecuencia: number = 3,
+  tipo: 'ventas' | 'compras' | 'todos' = 'todos'
+): Promise<DescripcionPropuesta[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('🔍 Obteniendo descripciones propuestas con frecuencia mínima:', minFrecuencia, 'tipo:', tipo);
+
+  // Obtener productos existentes para excluirlos
+  const { data: productos, error: productosError } = await supabase
+    .from('productos')
+    .select('nombre_producto')
+    .eq('activo', true);
+
+  if (productosError) {
+    console.error('❌ Error al obtener productos existentes:', productosError);
+    throw productosError;
+  }
+
+  const nombresProductosExistentes = new Set(
+    productos?.map(p => normalizarNombreProducto(p.nombre_producto).toLowerCase()) || []
+  );
 
   // Obtener todas las descripciones de facturas que no están mapeadas a productos
-  const { data: facturasDetalle, error: facturasError } = await supabase
+  let query = supabase
     .from('reg_facturas_detalle')
-    .select('descripcion_item, cantidad, monto_item')
+    .select(`
+      descripcion_item,
+      cantidad,
+      monto_item,
+      reg_facturas_xml!inner(
+        tipo_dte,
+        reg_ventas_id,
+        reg_compras_id
+      )
+    `)
     .not('descripcion_item', 'is', null);
+
+  // Filtrar por tipo de documento con lógica más estricta
+  if (tipo === 'ventas') {
+    query = query
+      .not('reg_facturas_xml.reg_ventas_id', 'is', null)
+      .is('reg_facturas_xml.reg_compras_id', null);
+  } else if (tipo === 'compras') {
+    query = query
+      .not('reg_facturas_xml.reg_compras_id', 'is', null)
+      .is('reg_facturas_xml.reg_ventas_id', null);
+  }
+  // Para 'todos', no aplicamos filtro adicional
+
+  const { data: facturasDetalle, error: facturasError } = await query;
 
   if (facturasError) {
     console.error('❌ Error al obtener detalles de facturas:', facturasError);
     throw facturasError;
   }
+
+  console.log(`📊 Detalles de facturas obtenidos para tipo '${tipo}':`, facturasDetalle?.length || 0);
 
   // Obtener todas las descripciones ya mapeadas
   const { data: mapeos, error: mapeosError } = await supabase
@@ -1031,8 +1157,13 @@ export const getDescripcionesPropuestas = async (minFrecuencia: number = 3): Pro
     const descripcionOriginal = item.descripcion_item?.trim();
     if (!descripcionOriginal || descripcionesMapeadas.has(descripcionOriginal.toLowerCase())) return;
 
+    // Excluir si coincide con productos existentes
     const nombreBase = normalizarNombreProducto(descripcionOriginal);
     const nombreBaseKey = nombreBase.toLowerCase();
+    if (nombresProductosExistentes.has(nombreBaseKey)) {
+      console.log(`⚠️ Excluyendo "${descripcionOriginal}" porque coincide con producto existente`);
+      return;
+    }
 
     const existing = productosAgrupados.get(nombreBaseKey) || {
       nombreBase: nombreBase,
@@ -1072,43 +1203,46 @@ export const getDescripcionesPropuestas = async (minFrecuencia: number = 3): Pro
 
 // Función para crear productos desde descripciones propuestas
 export const createProductosFromDescripciones = async (
- descripciones: string[],
- categoria?: string
+  descripciones: string[],
+  categoria?: string,
+  mapearOriginales?: boolean
 ): Promise<Producto[]> => {
- if (!supabase) {
-   throw new Error('Supabase no está configurado');
- }
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
 
- console.log('🚀 Creando productos desde descripciones:', descripciones.length);
+  console.log('🚀 Creando productos desde descripciones:', descripciones.length);
 
- const productosCreados: Producto[] = [];
+  const productosCreados: Producto[] = [];
 
- for (const descripcion of descripciones) {
-   try {
-     // Crear el producto
-     const producto = await createProducto({
-       nombre_producto: descripcion,
-       descripcion: `Producto creado desde descripción de factura: ${descripcion}`,
-       categoria: categoria || 'General',
-       activo: true
-     });
+  for (const descripcion of descripciones) {
+    try {
+      // Crear el producto
+      const producto = await createProducto({
+        nombre_producto: descripcion,
+        descripcion: `Producto creado desde descripción de factura: ${descripcion}`,
+        categoria: categoria || 'General',
+        activo: true
+      });
 
-     // Crear el mapeo
-     await supabase
-       .from('producto_descripcion_map')
-       .insert({
-         producto_id: producto.id,
-         descripcion_original: descripcion
-       });
+      // Solo crear el mapeo si se especifica y la descripción no coincide exactamente con el nombre del producto
+      if (mapearOriginales && descripcion !== producto.nombre_producto) {
+        await supabase
+          .from('producto_descripcion_map')
+          .insert({
+            producto_id: producto.id,
+            descripcion_original: descripcion
+          });
+      }
 
-     productosCreados.push(producto);
-   } catch (error) {
-     console.error(`❌ Error al crear producto para descripción "${descripcion}":`, error);
-   }
- }
+      productosCreados.push(producto);
+    } catch (error) {
+      console.error(`❌ Error al crear producto para descripción "${descripcion}":`, error);
+    }
+  }
 
- console.log('✅ Productos creados desde descripciones:', productosCreados.length);
- return productosCreados;
+  console.log('✅ Productos creados desde descripciones:', productosCreados.length);
+  return productosCreados;
 };
 
 // Función para mapear una descripción existente a un producto
@@ -1553,5 +1687,214 @@ export const getFacturaReferencias = async (regVentasId: number): Promise<RegFac
 
  console.log('✅ Referencias obtenidas:', data?.length || 0, 'registros');
  return data || [];
+};
+// === DATA STATUS FUNCTIONS ===
+
+// Interface for data status results
+export interface DataStatusResult {
+  documentType: string;
+  totalInSource: number;
+  withXmlDetail: number;
+  withoutXmlDetail: number;
+  percentageWithDetail: number;
+}
+
+// Function to get sales data status by document type
+export const getSalesDataStatus = async (): Promise<DataStatusResult[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 Obteniendo estado de datos de ventas...');
+
+  // Get all sales documents grouped by type
+  const { data: salesData, error: salesError } = await supabase
+    .from('reg_ventas')
+    .select('id, tipo_doc')
+    .not('tipo_doc', 'is', null);
+
+  if (salesError) {
+    console.error('❌ Error al obtener datos de ventas:', salesError);
+    throw salesError;
+  }
+
+  console.log('📊 Total de registros en reg_ventas:', salesData?.length || 0);
+
+  // Group sales by document type
+  const salesByType = new Map<string, number>();
+  const salesIdsByType = new Map<string, number[]>();
+
+  salesData?.forEach(sale => {
+    const type = sale.tipo_doc || 'Sin tipo';
+    salesByType.set(type, (salesByType.get(type) || 0) + 1);
+    if (!salesIdsByType.has(type)) {
+      salesIdsByType.set(type, []);
+    }
+    salesIdsByType.get(type)!.push(sale.id);
+  });
+
+  console.log('📊 Tipos de documentos de venta encontrados:', Array.from(salesByType.keys()));
+
+  // Get XML data for sales
+  const { data: xmlData, error: xmlError } = await supabase
+    .from('reg_facturas_xml')
+    .select('reg_ventas_id, tipo_dte')
+    .not('reg_ventas_id', 'is', null);
+
+  if (xmlError) {
+    console.error('❌ Error al obtener datos XML de ventas:', xmlError);
+    throw xmlError;
+  }
+
+  console.log('📊 Total de registros XML con reg_ventas_id:', xmlData?.length || 0);
+
+  // Group XML data by document type and count
+  const xmlByType = new Map<string, Set<number>>();
+  xmlData?.forEach(xml => {
+    const type = xml.tipo_dte || 'Sin tipo';
+    if (!xmlByType.has(type)) {
+      xmlByType.set(type, new Set());
+    }
+    xmlByType.get(type)!.add(xml.reg_ventas_id!);
+  });
+
+  // Calculate results
+  const results: DataStatusResult[] = [];
+
+  for (const [documentType, totalInSource] of salesByType.entries()) {
+    const xmlIds = xmlByType.get(documentType) || new Set();
+    const withXmlDetail = xmlIds.size;
+    const withoutXmlDetail = totalInSource - withXmlDetail;
+    const percentageWithDetail = totalInSource > 0 ? (withXmlDetail / totalInSource) * 100 : 0;
+
+    results.push({
+      documentType,
+      totalInSource,
+      withXmlDetail,
+      withoutXmlDetail,
+      percentageWithDetail
+    });
+  }
+
+  // Sort by total documents descending
+  results.sort((a, b) => b.totalInSource - a.totalInSource);
+
+  console.log('✅ Estado de datos de ventas obtenido:', results.length, 'tipos de documento');
+  return results;
+};
+
+// Function to get purchases data status by document type
+export const getPurchasesDataStatus = async (): Promise<DataStatusResult[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 Obteniendo estado de datos de compras...');
+
+  // Get all purchase documents grouped by type
+  const { data: purchasesData, error: purchasesError } = await supabase
+    .from('reg_compras')
+    .select('id, tipo_doc')
+    .not('tipo_doc', 'is', null);
+
+  if (purchasesError) {
+    console.error('❌ Error al obtener datos de compras:', purchasesError);
+    throw purchasesError;
+  }
+
+  console.log('📊 Total de registros en reg_compras:', purchasesData?.length || 0);
+
+  // Group purchases by document type (note: tipo_doc is number in reg_compras)
+  const purchasesByType = new Map<string, number>();
+  const purchasesIdsByType = new Map<string, number[]>();
+
+  purchasesData?.forEach(purchase => {
+    const type = purchase.tipo_doc?.toString() || 'Sin tipo';
+    purchasesByType.set(type, (purchasesByType.get(type) || 0) + 1);
+    if (!purchasesIdsByType.has(type)) {
+      purchasesIdsByType.set(type, []);
+    }
+    purchasesIdsByType.get(type)!.push(purchase.id);
+  });
+
+  console.log('📊 Tipos de documentos de compra encontrados:', Array.from(purchasesByType.keys()));
+
+  // Get XML data for purchases
+  const { data: xmlData, error: xmlError } = await supabase
+    .from('reg_facturas_xml')
+    .select('reg_compras_id, tipo_dte')
+    .not('reg_compras_id', 'is', null);
+
+  if (xmlError) {
+    console.error('❌ Error al obtener datos XML de compras:', xmlError);
+    throw xmlError;
+  }
+
+  console.log('📊 Total de registros XML con reg_compras_id:', xmlData?.length || 0);
+
+  // Group XML data by document type and count
+  const xmlByType = new Map<string, Set<number>>();
+  xmlData?.forEach(xml => {
+    const type = xml.tipo_dte || 'Sin tipo';
+    if (!xmlByType.has(type)) {
+      xmlByType.set(type, new Set());
+    }
+    xmlByType.get(type)!.add(xml.reg_compras_id!);
+  });
+
+  // Calculate results
+  const results: DataStatusResult[] = [];
+
+  for (const [documentType, totalInSource] of purchasesByType.entries()) {
+    const xmlIds = xmlByType.get(documentType) || new Set();
+    const withXmlDetail = xmlIds.size;
+    const withoutXmlDetail = totalInSource - withXmlDetail;
+    const percentageWithDetail = totalInSource > 0 ? (withXmlDetail / totalInSource) * 100 : 0;
+
+    results.push({
+      documentType,
+      totalInSource,
+      withXmlDetail,
+      withoutXmlDetail,
+      percentageWithDetail
+    });
+  }
+
+  // Sort by total documents descending
+  results.sort((a, b) => b.totalInSource - a.totalInSource);
+
+  console.log('✅ Estado de datos de compras obtenido:', results.length, 'tipos de documento');
+  return results;
+};
+
+// Function to get combined data status for both sales and purchases
+export const getCombinedDataStatus = async () => {
+  const [salesStatus, purchasesStatus] = await Promise.all([
+    getSalesDataStatus(),
+    getPurchasesDataStatus()
+  ]);
+
+  return {
+    sales: salesStatus,
+    purchases: purchasesStatus,
+    summary: {
+      sales: {
+        totalDocuments: salesStatus.reduce((sum, item) => sum + item.totalInSource, 0),
+        totalWithDetail: salesStatus.reduce((sum, item) => sum + item.withXmlDetail, 0),
+        totalWithoutDetail: salesStatus.reduce((sum, item) => sum + item.withoutXmlDetail, 0),
+        overallPercentage: salesStatus.length > 0 ?
+          (salesStatus.reduce((sum, item) => sum + item.withXmlDetail, 0) /
+           salesStatus.reduce((sum, item) => sum + item.totalInSource, 0)) * 100 : 0
+      },
+      purchases: {
+        totalDocuments: purchasesStatus.reduce((sum, item) => sum + item.totalInSource, 0),
+        totalWithDetail: purchasesStatus.reduce((sum, item) => sum + item.withXmlDetail, 0),
+        totalWithoutDetail: purchasesStatus.reduce((sum, item) => sum + item.withoutXmlDetail, 0),
+        overallPercentage: purchasesStatus.length > 0 ?
+          (purchasesStatus.reduce((sum, item) => sum + item.withXmlDetail, 0) /
+           purchasesStatus.reduce((sum, item) => sum + item.totalInSource, 0)) * 100 : 0
+      }
+    }
+  };
 };
 
