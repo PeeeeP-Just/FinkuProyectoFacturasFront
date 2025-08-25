@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getVentas, getClientes, testVentasConnection, calculateVentasTotal, getDocumentStats, markInvoiceAsFactored, unmarkInvoiceAsFactored, groupRelatedDocuments } from '../lib/database';
+import { getVentas, getClientes, testVentasConnection, calculateVentasTotal, getDocumentStats, markInvoiceAsFactored, unmarkInvoiceAsFactored, groupRelatedDocuments, clearCacheForFilter } from '../lib/database';
 import { RegVenta } from '../types/database';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -42,6 +42,8 @@ export const VentasModule: React.FC = () => {
   const [factoringDate, setFactoringDate] = useState('');
   const [selectedInvoices, setSelectedInvoices] = useState<Set<number>>(new Set());
   const [showBulkActions, setShowBulkActions] = useState(false);
+  const [showBulkFactoringModal, setShowBulkFactoringModal] = useState(false);
+  const [bulkFactoringDate, setBulkFactoringDate] = useState('');
   const [documentGroups, setDocumentGroups] = useState<any[]>([]);
   const [sortConfig, setSortConfig] = useState<{
     field: string;
@@ -59,8 +61,9 @@ export const VentasModule: React.FC = () => {
     rutCliente: string;
   } | null>(null);
 
-  const fetchVentas = async () => {
-    if (isLoadingData) return; // Prevent multiple simultaneous calls
+  const fetchVentas = async (forceRefresh = false) => {
+    // Allow forced refresh (used after factoring operations)
+    if (!forceRefresh && isLoadingData) return; // Prevent multiple simultaneous calls
 
     // Only fetch if filters are initialized
     if (!filtersInitialized) {
@@ -68,7 +71,9 @@ export const VentasModule: React.FC = () => {
       return;
     }
 
-    setIsLoadingData(true);
+    if (!forceRefresh) {
+      setIsLoadingData(true);
+    }
     setLoading(true);
 
     const filterParams = {
@@ -149,51 +154,103 @@ export const VentasModule: React.FC = () => {
 
   const handleMarkAsFactored = (invoice: RegVenta) => {
     setSelectedInvoice(invoice);
-    setFactoringDate(invoice.fecha_recepcion || new Date().toISOString().split('T')[0]);
+    // Default hierarchy: 1) Invoice date, 2) Today's date as fallback
+    const invoiceDate = invoice.fecha_recepcion || invoice.fecha_docto;
+    const defaultDate = invoiceDate ? invoiceDate.split('T')[0] : new Date().toISOString().split('T')[0];
+    setFactoringDate(defaultDate);
     setShowFactoringModal(true);
   };
 
   const handleFactoringSubmit = async () => {
     if (!selectedInvoice) return;
 
+    if (!factoringDate) {
+      alert('Por favor selecciona una fecha de factoring');
+      return;
+    }
+
     try {
-      const today = new Date().toISOString().split('T')[0];
+      console.log('🔄 Iniciando proceso de factoring para factura:', selectedInvoice.id);
+
+      // Set loading state to show user something is happening
+      setIsLoadingData(true);
 
       if (selectedInvoice.is_factored) {
-        await unmarkInvoiceAsFactored(selectedInvoice.id);
+        console.log('🏦 Quitando factoring...');
+        const updatedInvoice = await unmarkInvoiceAsFactored(selectedInvoice.id);
+        console.log('✅ Factoring removido:', updatedInvoice);
       } else {
-        await markInvoiceAsFactored(selectedInvoice.id, today);
+        console.log('🏦 Marcando como factorizada con fecha:', factoringDate);
+        const updatedInvoice = await markInvoiceAsFactored(selectedInvoice.id, factoringDate);
+        console.log('✅ Factura factorizada:', updatedInvoice);
       }
+
+      // Close modal first
       setShowFactoringModal(false);
       setSelectedInvoice(null);
       setFactoringDate('');
-      await fetchVentas();
+
+      // Clear any cached data to ensure fresh fetch
+      console.log('🔄 Limpiando caché y refrescando datos...');
+      clearCacheForFilter('ventas', {
+        searchTerm,
+        dateFrom,
+        dateTo,
+        rutCliente: selectedRutCliente
+      });
+
+      // Refresh data with fresh fetch (force refresh to bypass loading guard)
+      await fetchVentas(true);
+      console.log('✅ Datos refrescados exitosamente');
+
     } catch (error) {
-      console.error('Error updating factoring status:', error);
-      alert('Error al actualizar el estado de factoring');
+      console.error('❌ Error updating factoring status:', error);
+      alert(`Error al actualizar el estado de factoring: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
-  const handleBulkFactoring = async (markAsFactored: boolean) => {
+  const handleBulkFactoring = async (markAsFactored: boolean, customDate?: string) => {
     if (selectedInvoices.size === 0) return;
 
     try {
-      const today = new Date().toISOString().split('T')[0];
+      setIsLoadingData(true);
+      console.log('🔄 Iniciando factoring en masa para', selectedInvoices.size, 'facturas');
+
+      const dateToUse = customDate || new Date().toISOString().split('T')[0];
       const promises = Array.from(selectedInvoices).map(invoiceId => {
         if (markAsFactored) {
-          return markInvoiceAsFactored(invoiceId, today);
+          console.log('🏦 Marcando como factorizada factura:', invoiceId);
+          return markInvoiceAsFactored(invoiceId, dateToUse);
         } else {
+          console.log('🏦 Quitando factoring de factura:', invoiceId);
           return unmarkInvoiceAsFactored(invoiceId);
         }
       });
 
       await Promise.all(promises);
+      console.log('✅ Factoring en masa completado');
+
       setSelectedInvoices(new Set());
       setShowBulkActions(false);
-      await fetchVentas();
+
+      // Clear cache and refresh data
+      clearCacheForFilter('ventas', {
+        searchTerm,
+        dateFrom,
+        dateTo,
+        rutCliente: selectedRutCliente
+      });
+
+      await fetchVentas(true);
+      console.log('✅ Datos refrescados después de factoring en masa');
+
     } catch (error) {
-      console.error('Error updating bulk factoring status:', error);
+      console.error('❌ Error updating bulk factoring status:', error);
       alert('Error al actualizar el estado de factoring en masa');
+    } finally {
+      setIsLoadingData(false);
     }
   };
 
@@ -441,7 +498,10 @@ export const VentasModule: React.FC = () => {
             </span>
             <div className="flex space-x-2">
               <button
-                onClick={() => handleBulkFactoring(true)}
+                onClick={() => {
+                  setBulkFactoringDate(new Date().toISOString().split('T')[0]);
+                  setShowBulkFactoringModal(true);
+                }}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
               >
                 Marcar como Factorizadas
@@ -459,6 +519,16 @@ export const VentasModule: React.FC = () => {
                 Limpiar Selección
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay for Factoring Operations */}
+      {isLoadingData && (
+        <div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 flex items-center space-x-4">
+            <div className="w-6 h-6 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+            <p className="text-slate-700 font-medium">Actualizando estado de factoring...</p>
           </div>
         </div>
       )}
@@ -653,13 +723,28 @@ export const VentasModule: React.FC = () => {
                               </span>
                             )}
                             <button
-                              onClick={() => handleMarkAsFactored(originalInvoice)}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                console.log('🔄 Factoring button clicked for invoice:', originalInvoice.id, 'with credit notes:', group.creditNotes.length);
+                                handleMarkAsFactored(originalInvoice);
+                              }}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
                               className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
                                 originalInvoice.is_factored
                                   ? 'text-red-600 hover:bg-red-100'
                                   : 'text-blue-600 hover:bg-blue-100'
-                              }`}
-                              title={originalInvoice.is_factored ? 'Quitar factoring' : 'Marcar como factorizada'}
+                              } ${group.isFullyCancelled ? 'opacity-50' : ''}`}
+                              title={group.isFullyCancelled
+                                ? 'Factura totalmente cancelada - no se puede factorizar'
+                                : originalInvoice.is_factored
+                                  ? 'Quitar factoring'
+                                  : `Marcar como factorizada${group.creditNotes.length > 0 ? ' (tiene NC)' : ''}`
+                              }
+                              disabled={group.isFullyCancelled}
                             >
                               <CreditCard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                             </button>
@@ -762,17 +847,56 @@ export const VentasModule: React.FC = () => {
                 </div>
               </div>
 
-              <div className="bg-green-50 border border-green-200 rounded-xl p-4">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Fecha de Factoring
+                </label>
+                <input
+                  type="date"
+                  value={factoringDate}
+                  onChange={(e) => setFactoringDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <div className="flex items-center space-x-2 text-xs">
+                  <span className="text-slate-500">Sugerencia inteligente:</span>
+                  <span
+                    className="text-blue-600 font-medium cursor-pointer hover:text-blue-800 hover:underline"
+                    onClick={() => {
+                      const suggestedDate = selectedInvoice.fecha_recepcion || selectedInvoice.fecha_docto;
+                      if (suggestedDate) {
+                        const dateForInput = suggestedDate.split('T')[0]; // Extract date part for input field
+                        setFactoringDate(dateForInput);
+                      }
+                    }}
+                    title="Click para usar esta fecha"
+                  >
+                    {selectedInvoice.fecha_recepcion
+                      ? format(new Date(selectedInvoice.fecha_recepcion), 'dd/MM/yyyy', { locale: es })
+                      : selectedInvoice.fecha_docto
+                        ? format(new Date(selectedInvoice.fecha_docto), 'dd/MM/yyyy', { locale: es })
+                        : 'Fecha no disponible'
+                    }
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Esta fecha se utilizará para el cálculo del flujo de caja
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <div className="flex items-center space-x-2">
-                  <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center">
-                    <span className="text-green-600 text-xs">✓</span>
+                  <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-blue-600 text-xs">✓</span>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-green-800">
-                      Fecha de factoring: {format(new Date(), 'dd/MM/yyyy', { locale: es })}
+                    <p className="text-sm font-medium text-blue-800">
+                      Fecha seleccionada: {factoringDate ? format(new Date(factoringDate), 'dd/MM/yyyy', { locale: es }) : 'No seleccionada'}
                     </p>
-                    <p className="text-xs text-green-600 mt-1">
-                      Se usará la fecha actual para el flujo de caja
+                    <p className="text-xs text-blue-600 mt-1">
+                      {selectedInvoice.is_factored
+                        ? 'Se quitará el estado de factoring de esta factura'
+                        : 'La factura se marcará como factorizada con esta fecha'
+                      }
                     </p>
                   </div>
                 </div>
@@ -795,6 +919,125 @@ export const VentasModule: React.FC = () => {
                 }`}
               >
                 {selectedInvoice.is_factored ? 'Quitar Factoring' : 'Marcar como Factorizada'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Factoring Modal */}
+      {showBulkFactoringModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="p-6 border-b border-slate-200">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+                  <CreditCard className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">
+                    Marcar Facturas como Factorizadas
+                  </h3>
+                  <p className="text-sm text-slate-600">{selectedInvoices.size} factura(s) seleccionada(s)</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 rounded-xl p-4 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600">Facturas seleccionadas:</span>
+                  <span className="font-medium text-slate-900">{selectedInvoices.size}</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Fecha de Factoring
+                </label>
+                <input
+                  type="date"
+                  value={bulkFactoringDate}
+                  onChange={(e) => setBulkFactoringDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="text-xs text-slate-500">
+                  Esta fecha se utilizará para el cálculo del flujo de caja
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-center space-x-2">
+                  <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-blue-600 text-xs">✓</span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-blue-800">
+                      Fecha seleccionada: {bulkFactoringDate ? format(new Date(bulkFactoringDate), 'dd/MM/yyyy', { locale: es }) : 'No seleccionada'}
+                    </p>
+                    <p className="text-xs text-blue-600 mt-1">
+                      Las facturas seleccionadas se marcarán como factorizadas con esta fecha
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-200 flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowBulkFactoringModal(false);
+                  setBulkFactoringDate('');
+                }}
+                className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-xl transition-all duration-200"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (!bulkFactoringDate) {
+                    alert('Por favor selecciona una fecha de factoring');
+                    return;
+                  }
+
+                  try {
+                    setIsLoadingData(true);
+                    console.log('🔄 Iniciando factoring modal en masa para', selectedInvoices.size, 'facturas');
+
+                    const promises = Array.from(selectedInvoices).map(invoiceId => {
+                      console.log('🏦 Marcando como factorizada factura:', invoiceId);
+                      return markInvoiceAsFactored(invoiceId, bulkFactoringDate);
+                    });
+
+                    await Promise.all(promises);
+                    console.log('✅ Factoring modal en masa completado');
+
+                    setSelectedInvoices(new Set());
+                    setShowBulkFactoringModal(false);
+                    setBulkFactoringDate('');
+
+                    // Clear cache and refresh data
+                    clearCacheForFilter('ventas', {
+                      searchTerm,
+                      dateFrom,
+                      dateTo,
+                      rutCliente: selectedRutCliente
+                    });
+
+                    await fetchVentas(true);
+                    console.log('✅ Datos refrescados después de factoring modal en masa');
+
+                  } catch (error) {
+                    console.error('❌ Error updating bulk factoring status:', error);
+                    alert('Error al actualizar el estado de factoring en masa');
+                  } finally {
+                    setIsLoadingData(false);
+                  }
+                }}
+                className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl transition-all duration-200"
+                disabled={!bulkFactoringDate}
+              >
+                Confirmar Factoring
               </button>
             </div>
           </div>

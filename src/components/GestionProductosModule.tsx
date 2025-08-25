@@ -52,7 +52,7 @@ export const GestionProductosModule: React.FC = () => {
   const [descripcionesPropuestas, setDescripcionesPropuestas] = useState<DescripcionPropuesta[]>([]);
   const [selectedPropuestas, setSelectedPropuestas] = useState<Set<string>>(new Set());
   const [loadingPropuestas, setLoadingPropuestas] = useState(false);
-  const [propuestasFilter, setPropuestasFilter] = useState<'ventas' | 'todos'>('todos');
+  const [propuestasFilter, setPropuestasFilter] = useState<'ventas' | 'compras' | 'todos'>('todos');
   const [editablePropuestas, setEditablePropuestas] = useState<Map<string, string>>(new Map());
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
@@ -180,22 +180,22 @@ export const GestionProductosModule: React.FC = () => {
     setShowEditModal(true);
   };
 
-  const fetchDescripcionesPropuestas = async (resetEdits: boolean = true) => {
-    setLoadingPropuestas(true);
-    try {
-      const propuestas = await getDescripcionesPropuestas(2, 'ventas'); // Solo ventas - mínimo 2 repeticiones
-      setDescripcionesPropuestas(propuestas);
-      // Only reset editable names if explicitly requested (not when changing filters)
-      if (resetEdits) {
-        setEditablePropuestas(new Map());
-      }
-    } catch (error) {
-      console.error('Error al obtener descripciones propuestas:', error);
-      alert('Error al obtener descripciones propuestas');
-    } finally {
-      setLoadingPropuestas(false);
-    }
-  };
+ const fetchDescripcionesPropuestas = async (resetEdits: boolean = true) => {
+   setLoadingPropuestas(true);
+   try {
+     const propuestas = await getDescripcionesPropuestas(2, propuestasFilter); // Usar el filtro actual
+     setDescripcionesPropuestas(propuestas);
+     // Only reset editable names if explicitly requested (not when changing filters)
+     if (resetEdits) {
+       setEditablePropuestas(new Map());
+     }
+   } catch (error) {
+     console.error('Error al obtener descripciones propuestas:', error);
+     alert('Error al obtener descripciones propuestas');
+   } finally {
+     setLoadingPropuestas(false);
+   }
+ };
 
   const handleCreateProductosFromPropuestas = async () => {
     if (selectedPropuestas.size === 0) return;
@@ -789,11 +789,10 @@ export const GestionProductosModule: React.FC = () => {
                     <p className="text-sm text-slate-600">Descripciones que se repiten y pueden convertirse en productos</p>
                   </div>
                 </div>
-                {/* Filter hidden as requested */}
-                {/* <select
+                <select
                   value={propuestasFilter}
                   onChange={(e) => {
-                    const newFilter = e.target.value as 'ventas' | 'todos';
+                    const newFilter = e.target.value as 'ventas' | 'compras' | 'todos';
                     setPropuestasFilter(newFilter);
                     setSelectedPropuestas(new Set());
                     // Auto-refresh proposals when filter changes (don't reset edits)
@@ -803,7 +802,8 @@ export const GestionProductosModule: React.FC = () => {
                 >
                   <option value="todos">Todos</option>
                   <option value="ventas">Solo Ventas</option>
-                </select> */}
+                  <option value="compras">Solo Compras</option>
+                </select>
               </div>
             </div>
 

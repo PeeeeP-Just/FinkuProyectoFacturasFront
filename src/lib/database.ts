@@ -1258,17 +1258,20 @@ export const getDescripcionesPropuestas = async (
     `)
     .not('descripcion_item', 'is', null);
 
-  // Filtrar por tipo de documento con lógica más estricta
+  // Filtrar por tipo de documento con lógica corregida
   if (tipo === 'ventas') {
+    // Solo facturas de venta (tienen reg_ventas_id y NO tienen reg_compras_id)
     query = query
       .not('reg_facturas_xml.reg_ventas_id', 'is', null)
       .is('reg_facturas_xml.reg_compras_id', null);
   } else if (tipo === 'compras') {
+    // Solo facturas de compra (tienen reg_compras_id y NO tienen reg_ventas_id)
     query = query
       .not('reg_facturas_xml.reg_compras_id', 'is', null)
       .is('reg_facturas_xml.reg_ventas_id', null);
   }
-  // Para 'todos', no aplicamos filtro adicional
+  // Para 'todos', no aplicamos filtro adicional - incluimos todas las facturas que tengan
+  // ya sea reg_ventas_id o reg_compras_id (o ambos)
 
   const { data: facturasDetalle, error: facturasError } = await query;
 
@@ -1304,10 +1307,17 @@ export const getDescripcionesPropuestas = async (
     const descripcionOriginal = item.descripcion_item?.trim();
     if (!descripcionOriginal || descripcionesMapeadas.has(descripcionOriginal.toLowerCase())) return;
 
-    // Excluir si coincide con productos existentes
+    // Excluir si coincide con productos existentes (comparación más robusta)
     const nombreBase = normalizarNombreProducto(descripcionOriginal);
     const nombreBaseKey = nombreBase.toLowerCase();
-    if (nombresProductosExistentes.has(nombreBaseKey)) {
+
+    // Check if any existing product name contains this base name or vice versa
+    const shouldExclude = Array.from(nombresProductosExistentes).some(existingProduct => {
+      const existingNormalized = normalizarNombreProducto(existingProduct).toLowerCase();
+      return existingNormalized.includes(nombreBaseKey) || nombreBaseKey.includes(existingNormalized);
+    });
+
+    if (shouldExclude) {
       console.log(`⚠️ Excluyendo "${descripcionOriginal}" porque coincide con producto existente`);
       return;
     }

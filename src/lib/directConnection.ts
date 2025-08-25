@@ -4,6 +4,18 @@
 export const testDirectConnection = async () => {
   console.log('🔍 Probando conexión directa a PostgreSQL...');
 
+  // Validar que las variables de entorno estén configuradas
+  const requiredVars = ['VITE_DB_HOST', 'VITE_DB_USER', 'VITE_DB_PASSWORD'];
+  const missingVars = requiredVars.filter(varName => !import.meta.env[varName]);
+
+  if (missingVars.length > 0) {
+    console.error('❌ Variables de entorno faltantes:', missingVars);
+    return {
+      success: false,
+      message: `Faltan configurar las siguientes variables de entorno: ${missingVars.join(', ')}`
+    };
+  }
+
   // Información de conexión desde variables de entorno
   const dbConfig = {
     host: import.meta.env.VITE_DB_HOST,
@@ -12,12 +24,13 @@ export const testDirectConnection = async () => {
     user: import.meta.env.VITE_DB_USER,
     password: import.meta.env.VITE_DB_PASSWORD
   };
-  
+
   console.log('📋 Configuración de conexión:');
   console.log(`Host: ${dbConfig.host}`);
   console.log(`Puerto: ${dbConfig.port}`);
   console.log(`Base de datos: ${dbConfig.database}`);
   console.log(`Usuario: ${dbConfig.user}`);
+  console.log(`Password: ${dbConfig.password ? '***' : 'NO CONFIGURADO'}`);
   
   // Para usar en el navegador, necesitamos usar Supabase client
   // Las conexiones directas a PostgreSQL no funcionan desde el navegador por seguridad
