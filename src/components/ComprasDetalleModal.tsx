@@ -152,7 +152,7 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
             <div className="p-6 space-y-6">
               {/* Table */}
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto max-h-96 overflow-y-auto">
                   <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50">
                       <tr>
