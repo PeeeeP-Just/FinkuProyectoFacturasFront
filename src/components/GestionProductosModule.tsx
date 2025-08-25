@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   getProductos,
+  getProductosConEstadisticas,
   createProducto,
   updateProducto,
   deleteProducto,
   getDescripcionesPropuestas,
   createProductosFromDescripciones,
-  getDataIntegrityDiagnostic
+  getDataIntegrityDiagnostic,
+  ProductoConEstadisticas
 } from '../lib/database';
 import { Producto, DescripcionPropuesta } from '../types/database';
 import { format } from 'date-fns';
@@ -23,14 +25,22 @@ import {
   X,
   Lightbulb,
   ShoppingCart,
-  Download
+  Download,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  DollarSign,
+  BarChart3,
+  ShoppingBag,
+  TrendingUp
 } from 'lucide-react';
 import { NoConnection } from './NoConnection';
 import { SetupGuide } from './SetupGuide';
 import { CompactFilterBar } from './CompactFilterBar';
 
 export const GestionProductosModule: React.FC = () => {
-  const [productos, setProductos] = useState<Producto[]>([]);
+  const [productos, setProductos] = useState<ProductoConEstadisticas[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [showSetup, setShowSetup] = useState(false);
@@ -42,10 +52,12 @@ export const GestionProductosModule: React.FC = () => {
   const [descripcionesPropuestas, setDescripcionesPropuestas] = useState<DescripcionPropuesta[]>([]);
   const [selectedPropuestas, setSelectedPropuestas] = useState<Set<string>>(new Set());
   const [loadingPropuestas, setLoadingPropuestas] = useState(false);
-  const [propuestasFilter, setPropuestasFilter] = useState<'ventas' | 'compras' | 'todos'>('todos');
+  const [propuestasFilter, setPropuestasFilter] = useState<'ventas' | 'todos'>('todos');
   const [editablePropuestas, setEditablePropuestas] = useState<Map<string, string>>(new Map());
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [expandedVariations, setExpandedVariations] = useState<Set<number>>(new Set());
+  const [stats, setStats] = useState<any>(null);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -60,8 +72,20 @@ export const GestionProductosModule: React.FC = () => {
   const fetchProductos = async () => {
     try {
       setLoading(true);
-      const data = await getProductos();
+      // Get all products (including inactive) for management
+      const data = await getProductosConEstadisticas();
       setProductos(data);
+
+      // Calculate statistics only for active products
+      const activeProducts = data.filter(producto => producto.activo);
+      const stats = {
+        totalProductos: activeProducts.length,
+        totalUnidades: activeProducts.reduce((sum, p) => sum + (p.total_unidades || 0), 0),
+        totalIngresos: activeProducts.reduce((sum, p) => sum + (p.total_ingresos || 0), 0),
+        totalVentas: activeProducts.reduce((sum, p) => sum + (p.numero_facturas || 0), 0)
+      };
+      setStats(stats);
+
       setConnected(true);
     } catch (error) {
       console.error('Error al obtener productos:', error);
@@ -128,6 +152,21 @@ export const GestionProductosModule: React.FC = () => {
     }
   };
 
+  const handleToggleProducto = async (producto: ProductoConEstadisticas) => {
+    const newActivo = !producto.activo;
+    const action = newActivo ? 'activar' : 'desactivar';
+
+    if (!confirm(`¿Estás seguro de que deseas ${action} este producto?`)) return;
+
+    try {
+      await updateProducto(producto.id, { activo: newActivo });
+      await fetchProductos();
+    } catch (error) {
+      console.error(`Error al ${action} producto:`, error);
+      alert(`Error al ${action} producto`);
+    }
+  };
+
   const openEditModal = (producto: Producto) => {
     setEditingProducto(producto);
     setFormData({
@@ -144,7 +183,7 @@ export const GestionProductosModule: React.FC = () => {
   const fetchDescripcionesPropuestas = async (resetEdits: boolean = true) => {
     setLoadingPropuestas(true);
     try {
-      const propuestas = await getDescripcionesPropuestas(2, propuestasFilter); // Mínimo 2 repeticiones
+      const propuestas = await getDescripcionesPropuestas(2, 'ventas'); // Solo ventas - mínimo 2 repeticiones
       setDescripcionesPropuestas(propuestas);
       // Only reset editable names if explicitly requested (not when changing filters)
       if (resetEdits) {
@@ -246,6 +285,63 @@ export const GestionProductosModule: React.FC = () => {
         </div>
       </div>
 
+      {/* Resumen de Estadísticas */}
+      {stats && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+          <div className="bg-gradient-to-br from-purple-500 via-purple-600 to-indigo-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-purple-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Total Productos</p>
+                <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">{stats.totalProductos}</p>
+                <p className="text-purple-200 text-xs mt-1 truncate">Productos únicos</p>
+              </div>
+              <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+                <Package className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-blue-500 via-blue-600 to-cyan-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-blue-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Total Unidades</p>
+                <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">{stats.totalUnidades.toLocaleString()}</p>
+                <p className="text-blue-200 text-xs mt-1 truncate">Unidades vendidas</p>
+              </div>
+              <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+                <ShoppingBag className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-emerald-500 via-green-600 to-teal-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-emerald-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Total Ingresos</p>
+                <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">${stats.totalIngresos.toLocaleString()}</p>
+                <p className="text-emerald-200 text-xs mt-1 truncate">Ingresos por productos</p>
+              </div>
+              <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+                <DollarSign className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-orange-500 via-amber-600 to-red-600 rounded-2xl p-4 sm:p-6 lg:p-8 text-white shadow-xl hover:shadow-2xl transition-all duration-300 hover:scale-[1.02]">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-orange-100 text-xs sm:text-sm font-medium tracking-wide uppercase mb-1 sm:mb-2 truncate">Total Ventas</p>
+                <p className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight break-all">{stats.totalVentas.toLocaleString()}</p>
+                <p className="text-orange-200 text-xs mt-1 truncate">Líneas de venta</p>
+              </div>
+              <div className="w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-sm ml-3 flex-shrink-0">
+                <BarChart3 className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-white" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Search Bar */}
       <CompactFilterBar
         searchTerm={searchTerm}
@@ -271,13 +367,16 @@ export const GestionProductosModule: React.FC = () => {
                   Categoría
                 </th>
                 <th className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Código
+                  N° Facturas
                 </th>
                 <th className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Precio Sugerido
+                  Unidades
                 </th>
                 <th className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                  Estado
+                  Ingresos
+                </th>
+                <th className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                  Variaciones
                 </th>
                 <th className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4 lg:py-5 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">
                   Acciones
@@ -320,13 +419,26 @@ export const GestionProductosModule: React.FC = () => {
                   <tr key={producto.id} className="hover:bg-purple-50/30 transition-all duration-200">
                     <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6">
                       <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <Package className="h-4 w-4 text-purple-600" />
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                          producto.activo ? 'bg-purple-100' : 'bg-gray-100'
+                        }`}>
+                          <Package className={`h-4 w-4 ${
+                            producto.activo ? 'text-purple-600' : 'text-gray-400'
+                          }`} />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium text-slate-900 truncate max-w-xs" title={producto.nombre_producto}>
-                            {producto.nombre_producto}
-                          </p>
+                          <div className="flex items-center space-x-2">
+                            <p className={`font-medium truncate max-w-xs ${
+                              producto.activo ? 'text-slate-900' : 'text-slate-500'
+                            }`} title={producto.nombre_producto}>
+                              {producto.nombre_producto}
+                            </p>
+                            {!producto.activo && (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                Inactivo
+                              </span>
+                            )}
+                          </div>
                           {producto.descripcion && (
                             <p className="text-slate-500 text-sm truncate max-w-xs" title={producto.descripcion}>
                               {producto.descripcion}
@@ -338,24 +450,74 @@ export const GestionProductosModule: React.FC = () => {
                     <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm text-slate-600">
                       {producto.categoria || '-'}
                     </td>
+                    <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm font-semibold text-blue-600">
+                      {producto.numero_facturas || 0}
+                    </td>
+                    <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm font-semibold text-green-600">
+                      {producto.total_unidades?.toLocaleString() || '0'}
+                    </td>
+                    <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm font-semibold text-emerald-600">
+                      ${producto.total_ingresos?.toLocaleString() || '0'}
+                    </td>
                     <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm text-slate-600">
-                      {producto.codigo_interno || '-'}
-                    </td>
-                    <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm font-semibold text-slate-900">
-                      ${producto.precio_sugerido?.toLocaleString() || '0'}
-                    </td>
-                    <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-sm">
-                      <span className={`inline-flex items-center space-x-1 px-2 py-1 text-xs font-semibold rounded-full ${
-                        producto.activo
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-red-100 text-red-800'
-                      }`}>
-                        {producto.activo ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                        <span>{producto.activo ? 'Activo' : 'Inactivo'}</span>
-                      </span>
+                      <div className="flex flex-col space-y-1">
+                        {producto.variaciones.length > 0 ? (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs bg-slate-100 px-2 py-1 rounded">
+                              {producto.variaciones.length} variaciones
+                            </span>
+                            <button
+                              onClick={() => {
+                                const newExpanded = new Set(expandedVariations);
+                                if (newExpanded.has(producto.id)) {
+                                  newExpanded.delete(producto.id);
+                                } else {
+                                  newExpanded.add(producto.id);
+                                }
+                                setExpandedVariations(newExpanded);
+                              }}
+                              className="text-xs text-blue-600 hover:text-blue-800 underline flex items-center space-x-1"
+                            >
+                              <span>{expandedVariations.has(producto.id) ? 'Ocultar' : 'Ver'}</span>
+                              {expandedVariations.has(producto.id) ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400">Sin variaciones</span>
+                        )}
+                        {expandedVariations.has(producto.id) && producto.variaciones.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {producto.variaciones.slice(0, 5).map((variacion, idx) => (
+                              <div key={idx} className="text-xs bg-slate-50 p-1 rounded border">
+                                {variacion}
+                              </div>
+                            ))}
+                            {producto.variaciones.length > 5 && (
+                              <div className="text-xs text-slate-500">
+                                ... y {producto.variaciones.length - 5} más
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 lg:py-6 text-center">
                       <div className="flex items-center justify-center space-x-2">
+                        <button
+                          onClick={() => handleToggleProducto(producto)}
+                          className={`p-2 rounded-lg transition-colors ${
+                            producto.activo
+                              ? 'text-green-600 hover:bg-green-100'
+                              : 'text-gray-400 hover:bg-gray-100'
+                          }`}
+                          title={producto.activo ? 'Desactivar producto' : 'Activar producto'}
+                        >
+                          {producto.activo ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                        </button>
                         <button
                           onClick={() => openEditModal(producto)}
                           className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
@@ -627,10 +789,11 @@ export const GestionProductosModule: React.FC = () => {
                     <p className="text-sm text-slate-600">Descripciones que se repiten y pueden convertirse en productos</p>
                   </div>
                 </div>
-                <select
+                {/* Filter hidden as requested */}
+                {/* <select
                   value={propuestasFilter}
                   onChange={(e) => {
-                    const newFilter = e.target.value as 'ventas' | 'compras' | 'todos';
+                    const newFilter = e.target.value as 'ventas' | 'todos';
                     setPropuestasFilter(newFilter);
                     setSelectedPropuestas(new Set());
                     // Auto-refresh proposals when filter changes (don't reset edits)
@@ -640,8 +803,7 @@ export const GestionProductosModule: React.FC = () => {
                 >
                   <option value="todos">Todos</option>
                   <option value="ventas">Solo Ventas</option>
-                  <option value="compras">Solo Compras</option>
-                </select>
+                </select> */}
               </div>
             </div>
 

@@ -893,32 +893,190 @@ export const groupRelatedDocuments = (documents: RegVenta[]): Array<{
 
 // === PRODUCTOS FUNCTIONS ===
 
+// Interface for enhanced product data
+export interface ProductoConEstadisticas extends Producto {
+  numero_facturas: number;
+  variaciones: string[];
+  total_unidades: number;
+  total_ingresos: number;
+}
+
 // Función para obtener todos los productos
 export const getProductos = async (activo?: boolean): Promise<Producto[]> => {
- if (!supabase) {
-   throw new Error('Supabase no está configurado');
- }
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
 
- console.log('📦 Obteniendo productos...', activo !== undefined ? `activo: ${activo}` : 'todos');
+  console.log('📦 Obteniendo productos...', activo !== undefined ? `activo: ${activo}` : 'todos');
 
- let query = supabase
-   .from('productos')
-   .select('*')
-   .order('nombre_producto');
+  let query = supabase
+    .from('productos')
+    .select('*')
+    .order('nombre_producto');
 
- if (activo !== undefined) {
-   query = query.eq('activo', activo);
- }
+  if (activo !== undefined) {
+    query = query.eq('activo', activo);
+  }
 
- const { data, error } = await query;
+  const { data, error } = await query;
 
- if (error) {
-   console.error('❌ Error al obtener productos:', error);
-   throw error;
- }
+  if (error) {
+    console.error('❌ Error al obtener productos:', error);
+    throw error;
+  }
 
- console.log('✅ Productos obtenidos:', data?.length || 0);
- return data || [];
+  console.log('✅ Productos obtenidos:', data?.length || 0);
+  return data || [];
+};
+
+// Función para obtener productos con estadísticas de facturas
+export const getProductosConEstadisticas = async (activo?: boolean): Promise<ProductoConEstadisticas[]> => {
+  if (!supabase) {
+    throw new Error('Supabase no está configurado');
+  }
+
+  console.log('📊 Obteniendo productos con estadísticas...', activo !== undefined ? `activo: ${activo}` : 'todos');
+
+  // Obtener productos base
+  const productos = await getProductos(activo);
+
+  if (productos.length === 0) {
+    return [];
+  }
+
+  // Obtener mapeos de productos para encontrar variaciones
+  const { data: mapeos, error: mapeosError } = await supabase
+    .from('producto_descripcion_map')
+    .select('producto_id, descripcion_original');
+
+  if (mapeosError) {
+    console.error('❌ Error al obtener mapeos:', mapeosError);
+    throw mapeosError;
+  }
+
+  // Crear mapa de producto_id -> descripciones
+  const productoMapeos = new Map<number, string[]>();
+  mapeos?.forEach(mapeo => {
+    const existing = productoMapeos.get(mapeo.producto_id) || [];
+    existing.push(mapeo.descripcion_original);
+    productoMapeos.set(mapeo.producto_id, existing);
+  });
+
+  // Cada producto solo busca sus propias variaciones exactas
+  // No hay lógica jerárquica - cada producto es independiente
+
+  // Obtener estadísticas de facturas para cada producto
+  const productosConEstadisticas: ProductoConEstadisticas[] = [];
+
+  console.log(`⏱️ [PERF] Iniciando procesamiento de ${productos.length} productos...`);
+  const startTime = performance.now();
+
+  // Obtener TODOS los detalles de facturas de una sola vez (optimización principal)
+  console.log(`⏱️ [PERF] Consultando todos los detalles de facturas...`);
+  const facturasStartTime = performance.now();
+
+  const { data: allFacturasDetalle, error: allFacturasError } = await supabase
+    .from('reg_facturas_detalle')
+    .select(`
+      descripcion_item,
+      cantidad,
+      precio_unitario,
+      monto_item,
+      reg_facturas_xml!inner(
+        tipo_dte,
+        reg_ventas_id,
+        reg_compras_id
+      )
+    `)
+    .not('descripcion_item', 'is', null);
+
+  const facturasEndTime = performance.now();
+  console.log(`⏱️ [PERF] Consulta de facturas completada en ${(facturasEndTime - facturasStartTime).toFixed(2)}ms. Registros obtenidos: ${allFacturasDetalle?.length || 0}`);
+
+  if (allFacturasError) {
+    console.error('❌ Error al obtener todas las facturas:', allFacturasError);
+    // Retornar productos sin estadísticas
+    return productos.map(producto => ({
+      ...producto,
+      numero_facturas: 0,
+      variaciones: [],
+      total_unidades: 0,
+      total_ingresos: 0
+    }));
+  }
+
+  // Crear mapa de descripciones -> facturas para búsqueda rápida
+  console.log(`⏱️ [PERF] Creando mapa de búsqueda rápida...`);
+  const mapStartTime = performance.now();
+
+  const facturasPorDescripcion = new Map<string, any[]>();
+  allFacturasDetalle?.forEach(factura => {
+    const descripcion = factura.descripcion_item!;
+    if (!facturasPorDescripcion.has(descripcion)) {
+      facturasPorDescripcion.set(descripcion, []);
+    }
+    facturasPorDescripcion.get(descripcion)!.push(factura);
+  });
+
+  const mapEndTime = performance.now();
+  console.log(`⏱️ [PERF] Mapa creado en ${(mapEndTime - mapStartTime).toFixed(2)}ms. Descripciones únicas: ${facturasPorDescripcion.size}`);
+
+  // Procesar todos los productos (cada uno busca solo sus propias variaciones exactas)
+  for (let i = 0; i < productos.length; i++) {
+    const producto = productos[i];
+    const productStartTime = performance.now();
+
+    console.log(`⏱️ [PERF] Procesando producto ${i + 1}/${productos.length}: "${producto.nombre_producto}"`);
+
+    // Obtener variaciones mapeadas del producto actual
+    const variaciones = productoMapeos.get(producto.id) || [];
+
+    // Usar algoritmo inteligente para encontrar solo variaciones EXACTAS del producto actual
+    const todasLasDescripciones = Array.from(facturasPorDescripcion.keys());
+    const coincidencias = encontrarMejorCoincidencia(producto.nombre_producto, todasLasDescripciones);
+
+    console.log(`⏱️ [PERF] Coincidencias encontradas para "${producto.nombre_producto}": ${coincidencias.length}`);
+
+    // Filtrar las facturas que coinciden EXACTAMENTE con las variaciones del producto
+    const facturasData: any[] = [];
+    coincidencias.forEach(coincidencia => {
+      const facturasCoincidencia = facturasPorDescripcion.get(coincidencia) || [];
+      facturasData.push(...facturasCoincidencia);
+    });
+
+    // Calcular estadísticas
+    const numero_facturas = facturasData.length;
+    const total_unidades = facturasData.reduce((sum, f) => sum + (f.cantidad || 0), 0);
+    const total_ingresos = facturasData.reduce((sum, f) => sum + (f.monto_item || 0), 0);
+
+    // Obtener todas las variaciones únicas
+    const todasLasVariaciones = new Set<string>();
+    facturasData.forEach(f => {
+      if (f.descripcion_item && f.descripcion_item !== producto.nombre_producto) {
+        todasLasVariaciones.add(f.descripcion_item);
+      }
+    });
+
+    // Agregar variaciones mapeadas
+    variaciones.forEach(v => todasLasVariaciones.add(v));
+
+    productosConEstadisticas.push({
+      ...producto,
+      numero_facturas: numero_facturas,
+      variaciones: Array.from(todasLasVariaciones),
+      total_unidades: total_unidades,
+      total_ingresos: total_ingresos
+    });
+
+    const productEndTime = performance.now();
+    console.log(`⏱️ [PERF] Producto "${producto.nombre_producto}" procesado en ${(productEndTime - productStartTime).toFixed(2)}ms. Facturas: ${numero_facturas}, Variaciones: ${todasLasVariaciones.size}`);
+  }
+
+  const endTime = performance.now();
+  console.log(`⏱️ [PERF] Procesamiento completo de ${productos.length} productos en ${(endTime - startTime).toFixed(2)}ms`);
+
+  console.log('✅ Productos con estadísticas obtenidos:', productosConEstadisticas.length);
+  return productosConEstadisticas;
 };
 
 // Función para crear un producto
@@ -1010,26 +1168,15 @@ function normalizarNombreProducto(descripcion: string): string {
 function encontrarMejorCoincidencia(productoNombre: string, descripcionesFacturas: string[]): string[] {
   const productoNormalizado = normalizarNombreProducto(productoNombre).toLowerCase();
 
-  // Primero intentar coincidencia exacta normalizada
-  const coincidenciasExactas = descripcionesFacturas.filter(desc => {
+  // Buscar coincidencias que contengan el NOMBRE COMPLETO del producto
+  const coincidencias = descripcionesFacturas.filter(desc => {
     const descNormalizada = normalizarNombreProducto(desc).toLowerCase();
-    return descNormalizada === productoNormalizado;
+    // El nombre del producto debe estar contenido COMPLETAMENTE en la descripción
+    // No solo palabras individuales, sino el nombre completo como una unidad
+    return descNormalizada.includes(productoNormalizado);
   });
 
-  if (coincidenciasExactas.length > 0) {
-    return coincidenciasExactas;
-  }
-
-  // Si no hay coincidencias exactas, buscar por palabras clave
-  const palabrasProducto = productoNormalizado.split(' ').filter(p => p.length > 2);
-  const coincidenciasParciales = descripcionesFacturas.filter(desc => {
-    const descNormalizada = normalizarNombreProducto(desc).toLowerCase();
-    return palabrasProducto.some(palabra =>
-      descNormalizada.includes(palabra)
-    );
-  });
-
-  return coincidenciasParciales;
+  return coincidencias;
 }
 
 // Función de diagnóstico para verificar la integridad de datos
@@ -1190,7 +1337,14 @@ export const getDescripcionesPropuestas = async (
       total_unidades: producto.totalUnidades,
       total_ingresos: producto.totalIngresos
     }))
-    .sort((a, b) => b.frecuencia - a.frecuencia); // Ordenar por frecuencia descendente
+    .sort((a, b) => {
+      // Primero ordenar por ingresos más altos
+      if (b.total_ingresos !== a.total_ingresos) {
+        return b.total_ingresos - a.total_ingresos;
+      }
+      // Luego por frecuencia descendente
+      return b.frecuencia - a.frecuencia;
+    });
 
   console.log('✅ Descripciones propuestas encontradas (agrupadas):', propuestas.length);
   console.log('📊 Ejemplos de agrupación:');
