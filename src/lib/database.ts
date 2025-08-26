@@ -186,6 +186,7 @@ export const getVentas = async (filters: {
   let query = supabase
     .from('reg_ventas')
     .select('*')
+    .neq('nro', 0) // Exclude documents with nro = 0 (VAT repetitions)
     .order('fecha_docto', { ascending: false });
 
   // Aplicar filtros (solo si tienen valores reales)
@@ -252,6 +253,7 @@ export const getCompras = async (filters: {
   let query = supabase
     .from('reg_compras')
     .select('*')
+    .neq('nro', 0) // Exclude documents with nro = 0 (VAT repetitions)
     .order('fecha_docto', { ascending: false });
 
   // Aplicar filtros (solo si tienen valores reales)
@@ -395,7 +397,10 @@ export const getProveedores = async () => {
 
 // Función para calcular totales de ventas considerando notas de crédito
 export const calculateVentasTotal = (ventas: any[]): number => {
-  return ventas.reduce((total, venta) => {
+  // Filter out documents with nro = 0 (VAT repetitions)
+  const filteredVentas = ventas.filter(venta => venta.nro !== 0);
+
+  return filteredVentas.reduce((total, venta) => {
     const multiplier = getDocumentMultiplier(venta.tipo_doc || '');
     const monto = venta.monto_total || 0;
     return total + (monto * multiplier);
@@ -404,7 +409,10 @@ export const calculateVentasTotal = (ventas: any[]): number => {
 
 // Función para calcular totales de compras considerando notas de crédito
 export const calculateComprasTotal = (compras: any[]): number => {
-  return compras.reduce((total, compra) => {
+  // Filter out documents with nro = 0 (VAT repetitions)
+  const filteredCompras = compras.filter(compra => compra.nro !== 0);
+
+  return filteredCompras.reduce((total, compra) => {
     const multiplier = getDocumentMultiplier(compra.tipo_doc || '');
     const monto = compra.monto_total || 0;
     return total + (monto * multiplier);
@@ -413,22 +421,25 @@ export const calculateComprasTotal = (compras: any[]): number => {
 
 // Función para obtener estadísticas de documentos
 export const getDocumentStats = (documents: any[], tipoDocField: string = 'tipo_doc') => {
+  // Filter out documents with nro = 0 (VAT repetitions)
+  const filteredDocuments = documents.filter(doc => doc.nro !== 0);
+
   const stats = {
     total: 0,
     positive: 0,
     negative: 0,
-    count: documents.length,
+    count: filteredDocuments.length,
     creditNotes: 0,
     regularDocs: 0
   };
 
-  documents.forEach(doc => {
+  filteredDocuments.forEach(doc => {
     const multiplier = getDocumentMultiplier(doc[tipoDocField] || '');
     const monto = doc.monto_total || 0;
     const amount = monto * multiplier;
-    
+
     stats.total += amount;
-    
+
     if (multiplier === -1) {
       stats.negative += Math.abs(amount);
       stats.creditNotes++;
@@ -829,35 +840,38 @@ export const getProductosAnalytics = async (filters: {
 
 // Group related documents (invoices with their credit notes)
 export const groupRelatedDocuments = (documents: RegVenta[]): Array<{
- original: RegVenta;
- creditNotes: RegVenta[];
- netAmount: number;
- isFullyCancelled: boolean;
+  original: RegVenta;
+  creditNotes: RegVenta[];
+  netAmount: number;
+  isFullyCancelled: boolean;
 }> => {
- const documentGroups: { [key: string]: { original: RegVenta; creditNotes: RegVenta[] } } = {};
- const processedDocuments = new Set<number>();
+  // Filter out documents with nro = 0 (VAT repetitions) before grouping
+  const filteredDocuments = documents.filter(doc => doc.nro !== 0);
 
- // First pass: identify original invoices and their credit notes
- documents.forEach(doc => {
-   if (doc.tipo_doc === '61' && doc.folio_docto_referencia) {
-     // This is a credit note, find its original invoice
-     const referenceFolio = doc.folio_docto_referencia.toString();
-     if (!documentGroups[referenceFolio]) {
-       documentGroups[referenceFolio] = { original: null as any, creditNotes: [] };
-     }
-     documentGroups[referenceFolio].creditNotes.push(doc);
-     processedDocuments.add(doc.id);
-   } else if (doc.tipo_doc !== '61') {
-     // This is potentially an original invoice
-     const folio = doc.folio || doc.nro?.toString() || '';
-     if (!documentGroups[folio]) {
-       documentGroups[folio] = { original: doc, creditNotes: [] };
-     } else {
-       documentGroups[folio].original = doc;
-     }
-     processedDocuments.add(doc.id);
-   }
- });
+  const documentGroups: { [key: string]: { original: RegVenta; creditNotes: RegVenta[] } } = {};
+  const processedDocuments = new Set<number>();
+
+  // First pass: identify original invoices and their credit notes
+  filteredDocuments.forEach(doc => {
+    if (doc.tipo_doc === '61' && doc.folio_docto_referencia) {
+      // This is a credit note, find its original invoice
+      const referenceFolio = doc.folio_docto_referencia.toString();
+      if (!documentGroups[referenceFolio]) {
+        documentGroups[referenceFolio] = { original: null as any, creditNotes: [] };
+      }
+      documentGroups[referenceFolio].creditNotes.push(doc);
+      processedDocuments.add(doc.id);
+    } else if (doc.tipo_doc !== '61') {
+      // This is potentially an original invoice
+      const folio = doc.folio || doc.nro?.toString() || '';
+      if (!documentGroups[folio]) {
+        documentGroups[folio] = { original: doc, creditNotes: [] };
+      } else {
+        documentGroups[folio].original = doc;
+      }
+      processedDocuments.add(doc.id);
+    }
+  });
 
  // Second pass: handle documents that weren't matched
  documents.forEach(doc => {
@@ -1871,11 +1885,12 @@ export const getSalesDataStatus = async (): Promise<DataStatusResult[]> => {
 
   console.log('📊 Obteniendo estado de datos de ventas...');
 
-  // Get all sales documents grouped by type
+  // Get all sales documents grouped by type, excluding nro = 0 (VAT repetitions)
   const { data: salesData, error: salesError } = await supabase
     .from('reg_ventas')
-    .select('id, tipo_doc')
-    .not('tipo_doc', 'is', null);
+    .select('id, tipo_doc, nro')
+    .not('tipo_doc', 'is', null)
+    .neq('nro', 0);
 
   if (salesError) {
     console.error('❌ Error al obtener datos de ventas:', salesError);
@@ -1955,11 +1970,12 @@ export const getPurchasesDataStatus = async (): Promise<DataStatusResult[]> => {
 
   console.log('📊 Obteniendo estado de datos de compras...');
 
-  // Get all purchase documents grouped by type
+  // Get all purchase documents grouped by type, excluding nro = 0 (VAT repetitions)
   const { data: purchasesData, error: purchasesError } = await supabase
     .from('reg_compras')
-    .select('id, tipo_doc')
-    .not('tipo_doc', 'is', null);
+    .select('id, tipo_doc, nro')
+    .not('tipo_doc', 'is', null)
+    .neq('nro', 0);
 
   if (purchasesError) {
     console.error('❌ Error al obtener datos de compras:', purchasesError);

@@ -46,6 +46,7 @@ export interface RegFacturaDetalle {
   xml_file_id?: string;
   numero_linea?: number;
   descripcion_item?: string;
+  descripcion_larga_item?: string;
   cantidad?: number;
   precio_unitario?: number;
   monto_item?: number;

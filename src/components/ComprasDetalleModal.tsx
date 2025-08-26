@@ -10,7 +10,9 @@ import {
   DollarSign,
   Hash,
   Building,
-  Calendar
+  Calendar,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface ComprasDetalleModalProps {
@@ -22,6 +24,10 @@ interface ComprasDetalleModalProps {
   fecha: string;
   total: number;
   rutProveedor?: string;
+  onNavigatePrevious?: () => void;
+  onNavigateNext?: () => void;
+  hasPrevious?: boolean;
+  hasNext?: boolean;
 }
 
 export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
@@ -32,7 +38,11 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
   proveedor,
   fecha,
   total,
-  rutProveedor = ''
+  rutProveedor = '',
+  onNavigatePrevious,
+  onNavigateNext,
+  hasPrevious = false,
+  hasNext = false
 }) => {
   const [detalle, setDetalle] = useState<RegFacturaDetalle[]>([]);
   const [loading, setLoading] = useState(false);
@@ -72,7 +82,7 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -86,12 +96,39 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
               <p className="text-sm text-slate-600">Folio: {compraFolio}</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
-          >
-            <X className="h-5 w-5 text-slate-500" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {/* Navigation Buttons */}
+            <button
+              onClick={onNavigatePrevious}
+              disabled={!hasPrevious}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
+                hasPrevious
+                  ? 'hover:bg-slate-100 text-slate-600'
+                  : 'text-slate-300 cursor-not-allowed'
+              }`}
+              title="Factura anterior"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <button
+              onClick={onNavigateNext}
+              disabled={!hasNext}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
+                hasNext
+                  ? 'hover:bg-slate-100 text-slate-600'
+                  : 'text-slate-300 cursor-not-allowed'
+              }`}
+              title="Factura siguiente"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors"
+            >
+              <X className="h-5 w-5 text-slate-500" />
+            </button>
+          </div>
         </div>
 
         {/* Compra Summary */}
@@ -134,7 +171,7 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16">
               <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-600 rounded-full animate-spin mb-4"></div>
@@ -152,7 +189,7 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
             <div className="p-6 space-y-6">
               {/* Table */}
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                   <table className="min-w-full divide-y divide-slate-200">
                     <thead className="bg-slate-50">
                       <tr>
@@ -183,7 +220,14 @@ export const ComprasDetalleModal: React.FC<ComprasDetalleModalProps> = ({
                             {linea.numero_linea || index + 1}
                           </td>
                           <td className="px-4 py-4 text-sm text-slate-900">
-                            <div className="max-w-xs truncate" title={linea.descripcion_item || '-'}>{linea.descripcion_item || '-'}</div>
+                            <div className="space-y-1">
+                              <div className="max-w-xs truncate" title={linea.descripcion_item || '-'}>{linea.descripcion_item || '-'}</div>
+                              {linea.descripcion_larga_item && linea.descripcion_larga_item.trim() !== '' && (
+                                <div className="text-xs text-slate-600 max-w-xs truncate italic" title={linea.descripcion_larga_item}>
+                                  {linea.descripcion_larga_item}
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap text-sm text-slate-600">
                             {linea.cantidad?.toLocaleString() || '0'}

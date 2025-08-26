@@ -236,6 +236,38 @@ export const ComprasModule: React.FC = () => {
     setShowDetalleModal(true);
   };
 
+  const handleNavigatePrevious = () => {
+    if (!selectedDetalleCompra || sortedCompras.length === 0) return;
+
+    const currentIndex = sortedCompras.findIndex(compra => compra.id === selectedDetalleCompra.id);
+    if (currentIndex > 0) {
+      const previousCompra = sortedCompras[currentIndex - 1];
+      handleShowDetalle(previousCompra);
+    }
+  };
+
+  const handleNavigateNext = () => {
+    if (!selectedDetalleCompra || sortedCompras.length === 0) return;
+
+    const currentIndex = sortedCompras.findIndex(compra => compra.id === selectedDetalleCompra.id);
+    if (currentIndex < sortedCompras.length - 1) {
+      const nextCompra = sortedCompras[currentIndex + 1];
+      handleShowDetalle(nextCompra);
+    }
+  };
+
+  const getNavigationState = () => {
+    if (!selectedDetalleCompra || sortedCompras.length === 0) {
+      return { hasPrevious: false, hasNext: false };
+    }
+
+    const currentIndex = sortedCompras.findIndex(compra => compra.id === selectedDetalleCompra.id);
+    return {
+      hasPrevious: currentIndex > 0,
+      hasNext: currentIndex < sortedCompras.length - 1
+    };
+  };
+
   const closeDetalleModal = () => {
     setShowDetalleModal(false);
     setSelectedDetalleCompra(null);
@@ -500,6 +532,10 @@ export const ComprasModule: React.FC = () => {
           fecha={selectedDetalleCompra.fecha}
           total={selectedDetalleCompra.total}
           rutProveedor={selectedDetalleCompra.rutProveedor}
+          onNavigatePrevious={handleNavigatePrevious}
+          onNavigateNext={handleNavigateNext}
+          hasPrevious={getNavigationState().hasPrevious}
+          hasNext={getNavigationState().hasNext}
         />
       )}
     </div>
